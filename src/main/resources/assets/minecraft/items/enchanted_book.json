@@ -1,0 +1,48 @@
+{
+  "model": {
+    "type": "minecraft:condition",
+    "property": "minecraft:component",
+    "predicate": "minecraft:stored_enchantments",
+    "value": [
+      {
+        "enchantments": "wsee:sword_aura"
+      }
+    ],
+    "on_true": {
+      "type": "minecraft:model",
+      "model": "wsee:item/sword_aura_enchanted_book"
+    },
+    "on_false": {
+      "type": "minecraft:condition",
+      "property": "minecraft:component",
+      "predicate": "minecraft:stored_enchantments",
+      "value": [
+        {
+          "enchantments": "wsee:shield_bash"
+        }
+      ],
+      "on_true": {
+        "type": "minecraft:model",
+        "model": "wsee:item/shield_bash_enchanted_book"
+      },
+      "on_false": {
+        "type": "minecraft:condition",
+        "property": "minecraft:component",
+        "predicate": "minecraft:stored_enchantments",
+        "value": [
+          {
+            "enchantments": "wsee:deflect"
+          }
+        ],
+        "on_true": {
+          "type": "minecraft:model",
+          "model": "wsee:item/deflect_enchanted_book"
+        },
+        "on_false": {
+          "type": "minecraft:model",
+          "model": "minecraft:item/enchanted_book"
+        }
+      }
+    }
+  }
+}

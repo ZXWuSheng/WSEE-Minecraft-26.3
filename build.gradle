@@ -1,0 +1,43 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.147'
+}
+
+version = '0.1.0'
+group = 'cn.wusheng'
+
+repositories {
+    maven { url = 'https://maven.neoforged.net/releases' }
+    mavenCentral()
+}
+
+base {
+    archivesName = 'WSEE'
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+
+neoForge {
+    version = '26.3.0.6-beta'
+    validateAccessTransformers = false
+
+    runs {
+        client {
+            client()
+        }
+    }
+
+    mods {
+        wsee {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(Jar).configureEach {
+    archiveFileName = "WSEE-${project.version}-NeoForge.jar"
+}

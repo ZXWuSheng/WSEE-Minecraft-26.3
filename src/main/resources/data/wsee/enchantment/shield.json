@@ -1,0 +1,12 @@
+{
+  "anvil_cost": 10,
+  "description": { "translate": "enchantment.wsee.shield" },
+  "exclusive_set": "#wsee:exclusive_set/shield",
+  "max_cost": { "base": 50, "per_level_above_first": 10 },
+  "max_level": 5,
+  "min_cost": { "base": 25, "per_level_above_first": 10 },
+  "primary_items": "#minecraft:enchantable/chest_armor",
+  "slots": ["chest"],
+  "supported_items": "#minecraft:enchantable/chest_armor",
+  "weight": 2
+}

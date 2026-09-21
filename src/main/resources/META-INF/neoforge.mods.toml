@@ -1,0 +1,20 @@
+modLoader = "javafml"
+loaderVersion = "[3,)"
+license = "MIT"
+
+[[mixins]]
+config = "wsee.mixins.json"
+
+[[mods]]
+modId = "wsee"
+version = "0.1.0"
+displayName = "无声无息：拓展附魔（Without a sound: Expanded Enchantments）"
+authors = "ZX_Wu_Sheng"
+credits = "KsqsnK，Badnng，Wangmeili，Niorris"
+iconFile = "wsee-icon.png"
+bannerFile = "wsee-banner.png"
+description = '''无声无息：拓展附魔为 Minecraft 添加武器、防具和投射物专属附魔，提供新的战斗反馈、防御机制与成长路线。
+
+Without a sound: Expanded Enchantments adds focused weapon, armor, and projectile enchantments with custom combat feedback, defensive mechanics, and progression paths.
+
+免责声明 / Disclaimer: 本模组为独立创作项目，与 Mojang、Microsoft 或其他第三方模组无关。Minecraft 及其相关资产归其各自权利人所有。使用本模组造成的存档损坏、数据丢失或兼容性问题由使用者自行承担。/ This is an independent project and is not affiliated with Mojang, Microsoft, or other third-party mods. Minecraft and related assets belong to their respective owners. Use at your own risk; the author is not responsible for save corruption, data loss, or compatibility issues.'''

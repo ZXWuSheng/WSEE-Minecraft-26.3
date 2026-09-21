@@ -1,0 +1,40 @@
+# Gradle and generated build output
+.gradle/
+/build/
+
+# NeoForge development runtime and generated game data
+/run/
+/reports/
+/error-report/
+/net/
+/assets/
+/data/
+
+# Rendered documentation previews and temporary verification artifacts
+.docx-*/
+.tmp-*/
+.tmp-*
+dual_doc_render*/
+.docx-*.zip
+
+# Superseded specification documents
+WSEE-0.1.0-Minecraft-26.2-Fabric-NeoForge-详细规格.docx
+无声无息-拓展附魔（Without a sound Expanded Enchantments）-详细数值.docx
+
+# Legacy source artwork not used by the current WSEE resources
+oatz-banner.png
+oatz-icon.png
+mcplogo.png
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.iml
+*.log
+Thumbs.db
+Desktop.ini
+~$*.docx
+
+# Crash dumps and local launcher caches
+crash-reports/
+launcher_log.txt

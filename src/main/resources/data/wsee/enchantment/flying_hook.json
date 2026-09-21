@@ -1,0 +1,12 @@
+{
+  "anvil_cost": 10,
+  "description": { "translate": "enchantment.wsee.flying_hook" },
+  "exclusive_set": "#wsee:exclusive_set/flying_hook",
+  "max_cost": { "base": 65, "per_level_above_first": 12 },
+  "max_level": 5,
+  "min_cost": { "base": 30, "per_level_above_first": 10 },
+  "primary_items": "#wsee:enchantable/flying_hook",
+  "slots": ["mainhand", "offhand"],
+  "supported_items": "#wsee:enchantable/flying_hook",
+  "weight": 2
+}

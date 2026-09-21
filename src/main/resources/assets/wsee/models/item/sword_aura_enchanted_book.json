@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "wsee:item/sword_aura_enchanted_book"
+  }
+}

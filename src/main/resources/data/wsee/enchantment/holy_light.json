@@ -1,0 +1,12 @@
+{
+  "anvil_cost": 12,
+  "description": { "translate": "enchantment.wsee.holy_light" },
+  "exclusive_set": "#wsee:exclusive_set/holy_light",
+  "max_cost": { "base": 60, "per_level_above_first": 12 },
+  "max_level": 3,
+  "min_cost": { "base": 30, "per_level_above_first": 12 },
+  "primary_items": "#minecraft:enchantable/chest_armor",
+  "slots": ["chest"],
+  "supported_items": "#minecraft:enchantable/chest_armor",
+  "weight": 1
+}

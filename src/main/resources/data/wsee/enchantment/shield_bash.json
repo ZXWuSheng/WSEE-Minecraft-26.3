@@ -1,0 +1,12 @@
+{
+  "anvil_cost": 5,
+  "description": { "translate": "enchantment.wsee.shield_bash" },
+  "exclusive_set": "#wsee:exclusive_set/shield_bash",
+  "max_cost": { "base": 25, "per_level_above_first": 0 },
+  "max_level": 1,
+  "min_cost": { "base": 15, "per_level_above_first": 0 },
+  "primary_items": "#wsee:enchantable/shield",
+  "slots": ["mainhand", "offhand"],
+  "supported_items": "#wsee:enchantable/shield",
+  "weight": 5
+}

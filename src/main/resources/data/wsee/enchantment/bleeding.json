@@ -1,0 +1,12 @@
+{
+  "anvil_cost": 8,
+  "description": { "translate": "enchantment.wsee.bleeding" },
+  "exclusive_set": "#wsee:exclusive_set/bleeding",
+  "max_cost": { "base": 45, "per_level_above_first": 10 },
+  "max_level": 3,
+  "min_cost": { "base": 20, "per_level_above_first": 10 },
+  "primary_items": "#minecraft:spears",
+  "slots": ["mainhand"],
+  "supported_items": "#minecraft:spears",
+  "weight": 2
+}

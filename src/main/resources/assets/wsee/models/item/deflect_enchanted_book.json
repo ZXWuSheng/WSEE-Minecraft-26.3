@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "wsee:item/deflect_enchanted_book"
+  }
+}

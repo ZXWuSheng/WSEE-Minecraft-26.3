@@ -1,0 +1,12 @@
+{
+  "anvil_cost": 8,
+  "description": { "translate": "enchantment.wsee.air_force" },
+  "exclusive_set": "#wsee:exclusive_set/air_force",
+  "max_cost": { "base": 30, "per_level_above_first": 0 },
+  "max_level": 1,
+  "min_cost": { "base": 15, "per_level_above_first": 0 },
+  "primary_items": "#wsee:enchantable/air_force",
+  "slots": ["mainhand", "offhand"],
+  "supported_items": "#wsee:enchantable/air_force",
+  "weight": 2
+}

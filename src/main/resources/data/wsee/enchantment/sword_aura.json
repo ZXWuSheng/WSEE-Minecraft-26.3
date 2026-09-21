@@ -1,0 +1,12 @@
+{
+  "anvil_cost": 12,
+  "description": { "translate": "enchantment.wsee.sword_aura" },
+  "exclusive_set": "#wsee:exclusive_set/sword_aura",
+  "max_cost": { "base": 65, "per_level_above_first": 15 },
+  "max_level": 5,
+  "min_cost": { "base": 45, "per_level_above_first": 15 },
+  "primary_items": "#minecraft:swords",
+  "slots": ["mainhand"],
+  "supported_items": "#minecraft:swords",
+  "weight": 1
+}
