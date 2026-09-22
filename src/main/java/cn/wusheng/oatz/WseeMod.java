@@ -20,7 +20,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.item.Rarity;
 import net.minecraft.world.item.ArrowItem;
 import net.minecraft.world.item.BowItem;
@@ -112,6 +111,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.EnumMap;
+import java.util.Optional;
 import java.util.function.Supplier;
 import java.lang.reflect.Field;
 
@@ -775,7 +775,12 @@ public final class WseeMod {
         });
     }
 
-    /** Converts tagged ore drops using the vanilla smelting recipe after loot (including Fortune) is resolved. */
+    /**
+     * Converts ore drops through the active server smelting recipe after loot
+     * (including Fortune) is resolved.  Looking up the recipe instead of
+     * hard-coding raw iron/gold/copper also supports ores supplied by other
+     * mods, including recipes that use a custom raw material or output stack.
+     */
     private void onBlockDrops(BlockDropsEvent event) {
         if (!(event.getBreaker() instanceof Player player)
                 || !event.getState().is(REFINABLE_ORES)
@@ -788,28 +793,24 @@ public final class WseeMod {
             return;
         }
         boolean converted = false;
-        net.minecraft.world.item.Item blockResult = event.getState().is(Blocks.IRON_ORE)
-                || event.getState().is(Blocks.DEEPSLATE_IRON_ORE) ? Items.IRON_INGOT
-                : event.getState().is(Blocks.GOLD_ORE) || event.getState().is(Blocks.DEEPSLATE_GOLD_ORE) ? Items.GOLD_INGOT
-                : event.getState().is(Blocks.COPPER_ORE) || event.getState().is(Blocks.DEEPSLATE_COPPER_ORE) ? Items.COPPER_INGOT : null;
         for (ItemEntity drop : event.getDrops()) {
             ItemStack input = drop.getItem();
             if (input.isEmpty()) {
                 continue;
             }
-            net.minecraft.world.item.Item resultItem = input.is(Items.RAW_IRON) ? Items.IRON_INGOT
-                    : input.is(Items.RAW_GOLD) ? Items.GOLD_INGOT
-                    : input.is(Items.RAW_COPPER) ? Items.COPPER_INGOT : null;
-            if (resultItem == null) {
-                resultItem = blockResult;
-            }
-            if (resultItem == null) {
+            Optional<RecipeHolder<SmeltingRecipe>> recipe = event.getLevel().recipeAccess().getRecipeFor(
+                    RecipeType.SMELTING,
+                    new SingleRecipeInput(input),
+                    event.getLevel());
+            if (recipe.isEmpty()) {
                 continue;
             }
-            ItemStack result = new ItemStack(resultItem);
+            ItemStack result = recipe.get().value().assemble(new SingleRecipeInput(input));
             if (result.isEmpty()) {
                 continue;
             }
+            // The recipe describes one input item. Multiply only after the
+            // block loot table has applied Fortune so its quantity is kept.
             int outputCount = Math.max(1, result.getCount()) * input.getCount();
             drop.setItem(result.copyWithCount(outputCount));
             converted = true;

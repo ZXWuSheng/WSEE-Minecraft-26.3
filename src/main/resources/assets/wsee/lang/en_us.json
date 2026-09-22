@@ -65,7 +65,7 @@
   "enchantment.wsee.tracking": "Tracking",
   "enchantment.wsee.tracking.desc": "At 80% draw, lock one nearby target.; Gently correct flight without changing damage or speed.",
   "enchantment.wsee.refining": "Refining",
-  "enchantment.wsee.refining.desc": "Iron, gold, and copper ores drop their ingots directly.; Fortune counts are preserved.",
+  "enchantment.wsee.refining.desc": "Ore-tagged blocks with a smelting recipe drop the smelted result directly.; Fortune quantities are preserved.",
   "item.wsee.refining_book": "Refining Enchanted Book",
   "item.wsee.tracking_book": "Tracking Enchanted Book",
   "enchantment.wsee.arrow_rain.desc": "At 90% draw, an impact calls down arrow rain.; 10-tick warning; lasts 30/36/40 ticks.",

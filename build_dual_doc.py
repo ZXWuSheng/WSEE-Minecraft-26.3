@@ -474,9 +474,9 @@ def main():
             'conflicts':'与火焰附加及流血冲突。', 'commands':['/enchant @s wsee:frostbite 3']},
         {
             'name':'炼化（Refining）','cn':'炼化','en':'Refining','id':'refining','gear':'镐','max':'I','max_num':1,
-            'intro':'挖掘铁、金、铜矿石时直接掉落对应矿物锭，不经过粗矿阶段。',
-            'level_headers':['等级','数值'], 'levels':[['I','铁矿石→铁锭；金矿石→金锭；铜矿石→铜锭；保持原掉落数量与 Fortune 倍数']],
-            'rules':['只处理 wsee:refinable_ores 标签内的矿石；精准采集等非法组合仍由数据、铁砧、附魔台和运行时共同拒绝。','替换掉落物而不额外生成第二份矿物；Fortune 产生的数量保留，耐久消耗遵循原版挖掘。','不额外产生熔炼经验；掉落表现保持原版掉落事件。'],
+            'intro':'挖掘带有矿石标签且存在熔炼配方的矿石时，直接掉落对应熔炼产物，不经过熔炼炉阶段。',
+            'level_headers':['等级','数值'], 'levels':[['I','原版铁、金、铜及其他模组矿石按其熔炼配方输出；保持原掉落数量与 Fortune 倍数']],
+            'rules':['只处理 wsee:refinable_ores 标签内且能匹配熔炼配方的矿石；兼容 minecraft:ores、c:ores 和 forge:ores 标签，精准采集等非法组合仍由数据、铁砧、附魔台和运行时共同拒绝。','替换掉落物而不额外生成第二份矿物；Fortune 产生的数量保留，耐久消耗遵循原版挖掘。','不额外生成熔炼经验；掉落表现保持原版掉落事件。'],
             'conflicts':'与精准采集冲突。', 'commands':['/enchant @s wsee:refining 1']},
         {
             'name':'根基（Foundation）','cn':'根基','en':'Foundation','id':'foundation','gear':'护腿','max':'III','max_num':3,

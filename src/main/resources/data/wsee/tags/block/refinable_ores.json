@@ -1,6 +1,18 @@
 {
   "replace": false,
   "values": [
+    {
+      "id": "#c:ores",
+      "required": false
+    },
+    {
+      "id": "#minecraft:ores",
+      "required": false
+    },
+    {
+      "id": "#forge:ores",
+      "required": false
+    },
     "minecraft:iron_ore",
     "minecraft:deepslate_iron_ore",
     "minecraft:gold_ore",
