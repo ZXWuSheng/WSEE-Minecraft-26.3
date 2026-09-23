@@ -431,7 +431,7 @@ public final class WseeMod {
         }
     }
 
-    private record QueuedProjectile(Projectile projectile, long dueTick) {}
+    private record QueuedProjectile(Projectile projectile, long dueTick, boolean crossbow) {}
     private record OverchargeCharge(double damageMultiplier, double velocityMultiplier) {}
     private record PendingMeleeAttack(UUID target, long tick) {}
     private record PendingFrostbiteAttack(UUID target, long tick, ItemStack weapon) {}
@@ -1532,9 +1532,7 @@ public final class WseeMod {
         if (arrow.getPersistentData().getBoolean(ARROW_RAIN_PROJECTILE_KEY).orElse(false)) {
             return;
         }
-        if (generatedExpansionArrows.remove(arrow.getUUID())) {
-            return;
-        }
+        boolean generatedExpansionArrow = generatedExpansionArrows.remove(arrow.getUUID());
         if (generatedClusterArrows.remove(arrow.getUUID())) {
             return;
         }
@@ -1542,44 +1540,48 @@ public final class WseeMod {
         if (!(arrow.getOwner() instanceof LivingEntity shooter)) {
             return;
         }
-        if (weapon.getItem() instanceof BowItem) {
-            int explosiveLevel = enchantmentLevel(shooter, weapon, EXPLOSIVE_ARROW_ID);
-            if (explosiveLevel > 0) {
-                explosiveArrows.put(arrow.getUUID(), new ExplosiveArrowState(shooter.getUUID(), explosiveLevel,
-                        shooter.getAttributeValue(Attributes.ATTACK_DAMAGE)));
-            }
-            Double recordedDrawRatio = bowDrawRatios.remove(shooter.getUUID());
-            // The release event normally runs before projectile creation. Keep
-            // a vanilla-physics fallback for integrations that reorder those
-            // callbacks: a fully drawn bow launches at roughly 3 blocks/tick.
-            double drawRatio = recordedDrawRatio != null
-                    ? recordedDrawRatio
-                    : Mth.clamp(arrow.getDeltaMovement().length() / 3.0D, 0.0D, 1.0D);
+        boolean bow = weapon.getItem() instanceof BowItem;
+        boolean crossbow = weapon.getItem() instanceof CrossbowItem;
+        if (!bow && !crossbow) {
+            return;
+        }
+        int explosiveLevel = enchantmentLevel(shooter, weapon, EXPLOSIVE_ARROW_ID);
+        if (explosiveLevel > 0) {
+            explosiveArrows.put(arrow.getUUID(), new ExplosiveArrowState(shooter.getUUID(), explosiveLevel,
+                    shooter.getAttributeValue(Attributes.ATTACK_DAMAGE)));
+        }
+        Double recordedDrawRatio = bow ? bowDrawRatios.remove(shooter.getUUID()) : null;
+        // The release event normally runs before projectile creation. Keep a
+        // vanilla-physics fallback for bows; a crossbow projectile is already
+        // released from a fully charged shot.
+        double drawRatio = crossbow ? 1.0D
+                : recordedDrawRatio != null
+                        ? recordedDrawRatio
+                        : Mth.clamp(arrow.getDeltaMovement().length() / 3.0D, 0.0D, 1.0D);
+        if (bow && !generatedExpansionArrow) {
             int arrowRainLevel = enchantmentLevel(shooter, weapon, ARROW_RAIN_ID);
             if (arrowRainLevel > 0 && drawRatio >= 0.90D) {
                 arrowRainStates.put(arrow.getUUID(), new ArrowRainState(shooter.getUUID(), arrowRainLevel,
                         readArrowBaseDamage(arrow), weapon, serverLevel.dimension()));
             }
-            int trackingLevel = enchantmentLevel(shooter, weapon, TRACKING_ID);
-            if (trackingLevel > 0 && drawRatio >= 0.80D) {
-                acquireTrackingTarget(arrow, shooter, trackingLevel, serverLevel);
+        }
+        int trackingLevel = enchantmentLevel(shooter, weapon, TRACKING_ID);
+        if (trackingLevel > 0 && drawRatio >= 0.80D) {
+            acquireTrackingTarget(arrow, shooter, trackingLevel, serverLevel);
+        }
+        if (bow) {
+            OverchargeCharge charge = overchargeCharges.remove(shooter.getUUID());
+            if (charge != null) {
+                applyOvercharge(arrow, charge, serverLevel);
             }
         }
-        OverchargeCharge charge = overchargeCharges.remove(shooter.getUUID());
-        if (charge != null) {
-            applyOvercharge(arrow, charge, serverLevel);
-            return;
-        }
-        if (!(weapon.getItem() instanceof CrossbowItem)) {
-            return;
-        }
         // EntityJoinLevelEvent also fires when an old arrow is restored from a
-        // world save. Only a genuinely new crossbow shot may create follow-ups.
+        // world save. Only a genuinely new bow or crossbow shot may create follow-ups.
         if (event.loadedFromDisk()) {
             return;
         }
         int expansion = enchantmentLevel(shooter, weapon, EXPANSION_ID);
-        if (expansion > 0) {
+        if (!generatedExpansionArrow && expansion > 0) {
             UUID shooterId = shooter.getUUID();
             long tick = serverLevel.getGameTime();
             if (expansionShotTicks.putIfAbsent(shooterId, tick) == null) {
@@ -1597,7 +1599,7 @@ public final class WseeMod {
                     extra.shoot(velocity.x, velocity.y, velocity.z, (float) velocity.length(), 0.0F);
                     extra.setCritArrow(arrow.isCritArrow());
                     generatedExpansionArrows.add(extra.getUUID());
-                    queue.add(new QueuedProjectile(extra, tick + i * 5L));
+                    queue.add(new QueuedProjectile(extra, tick + i * 5L, crossbow));
                 }
             }
         }
@@ -2439,7 +2441,8 @@ public final class WseeMod {
         projectile.setPos(player.getX(), player.getEyeY() - 0.1D, player.getZ());
         projectile.shoot(direction.x, direction.y, direction.z, (float) speed, 0.0F);
         if (player.level().addFreshEntity(projectile)) {
-            player.level().playSound(null, player.blockPosition(), SoundEvents.CROSSBOW_SHOOT,
+            player.level().playSound(null, player.blockPosition(), next.crossbow()
+                    ? SoundEvents.CROSSBOW_SHOOT : SoundEvents.ARROW_SHOOT,
                     SoundSource.PLAYERS, 1.0F, 1.0F);
         }
         if (queue.isEmpty()) {
@@ -2540,7 +2543,6 @@ public final class WseeMod {
             }
         }
         if (!(event.getSource().getDirectEntity() instanceof AbstractArrow arrow)
-                || !(arrow.getWeaponItem().getItem() instanceof CrossbowItem)
                 || !(event.getEntity().level() instanceof ServerLevel)) {
             return;
         }
@@ -2548,20 +2550,23 @@ public final class WseeMod {
         if (!(owner instanceof LivingEntity shooter)) {
             return;
         }
-        int level = enchantmentLevel(shooter, arrow.getWeaponItem(), ARMOR_PIERCING_ID);
-        if (level > 0) {
-            float amount = event.getAmount();
-            float armor = event.getEntity().getArmorValue();
-            float toughness = (float) event.getEntity().getAttributeValue(Attributes.ARMOR_TOUGHNESS);
-            float normal = CombatRules.getDamageAfterAbsorb(event.getEntity(), amount, event.getSource(), armor, toughness);
-            float reducedArmor = armor * (1.0F - level * 0.10F);
-            float pierced = CombatRules.getDamageAfterAbsorb(event.getEntity(), amount, event.getSource(), reducedArmor, toughness);
-            if (normal > 0.0F && pierced > normal) {
-                event.setAmount(amount * pierced / normal);
+        ItemStack weapon = arrow.getWeaponItem();
+        if (weapon.getItem() instanceof CrossbowItem) {
+            int level = enchantmentLevel(shooter, weapon, ARMOR_PIERCING_ID);
+            if (level > 0) {
+                float amount = event.getAmount();
+                float armor = event.getEntity().getArmorValue();
+                float toughness = (float) event.getEntity().getAttributeValue(Attributes.ARMOR_TOUGHNESS);
+                float normal = CombatRules.getDamageAfterAbsorb(event.getEntity(), amount, event.getSource(), armor, toughness);
+                float reducedArmor = armor * (1.0F - level * 0.10F);
+                float pierced = CombatRules.getDamageAfterAbsorb(event.getEntity(), amount, event.getSource(), reducedArmor, toughness);
+                if (normal > 0.0F && pierced > normal) {
+                    event.setAmount(amount * pierced / normal);
+                }
             }
         }
-        int cluster = enchantmentLevel(shooter, arrow.getWeaponItem(), CLUSTER_ID);
-        int expansion = enchantmentLevel(shooter, arrow.getWeaponItem(), EXPANSION_ID);
+        int cluster = enchantmentLevel(shooter, weapon, CLUSTER_ID);
+        int expansion = enchantmentLevel(shooter, weapon, EXPANSION_ID);
         if (cluster > 0 || expansion > 0) {
             // Extra arrows from cluster and expansion shots can arrive before
             // vanilla's ten-tick hurt cooldown expires.
@@ -3736,7 +3741,10 @@ public final class WseeMod {
         if (id.equals(DEFLECT_ID)) {
             return stack.is(Items.SHIELD);
         }
-        if (id.equals(EXPANSION_ID) || id.equals(CLUSTER_ID) || id.equals(ARMOR_PIERCING_ID)) {
+        if (id.equals(EXPANSION_ID) || id.equals(EXPLOSIVE_ARROW_ID) || id.equals(TRACKING_ID)) {
+            return isRangedWeapon(stack);
+        }
+        if (id.equals(CLUSTER_ID) || id.equals(ARMOR_PIERCING_ID)) {
             return stack.getItem() instanceof CrossbowItem;
         }
         if (id.equals(BLEEDING_ID)) {
@@ -3760,13 +3768,7 @@ public final class WseeMod {
         if (id.equals(COMBO_STRIKE_ID)) {
             return stack.is(ItemTags.SWORDS);
         }
-        if (id.equals(EXPLOSIVE_ARROW_ID)) {
-            return stack.getItem() instanceof BowItem;
-        }
         if (id.equals(ARROW_RAIN_ID)) {
-            return stack.getItem() instanceof BowItem;
-        }
-        if (id.equals(TRACKING_ID)) {
             return stack.getItem() instanceof BowItem;
         }
         if (id.equals(BATTLE_MOMENTUM_ID)) {
@@ -3809,6 +3811,10 @@ public final class WseeMod {
             return stack.is(ItemTags.SWORDS);
         }
         return false;
+    }
+
+    private static boolean isRangedWeapon(ItemStack stack) {
+        return stack.getItem() instanceof BowItem || stack.getItem() instanceof CrossbowItem;
     }
 
     private static boolean isBattleMomentumWeapon(ItemStack stack) {

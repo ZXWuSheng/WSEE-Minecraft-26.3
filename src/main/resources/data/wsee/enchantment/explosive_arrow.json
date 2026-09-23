@@ -1,11 +1,12 @@
 {
   "anvil_cost": 8,
   "description": { "translate": "enchantment.wsee.explosive_arrow" },
+  "exclusive_set": "#wsee:exclusive_set/explosive_arrow",
   "max_cost": { "base": 45, "per_level_above_first": 10 },
   "max_level": 3,
   "min_cost": { "base": 20, "per_level_above_first": 10 },
-  "primary_items": "#minecraft:enchantable/bow",
+  "primary_items": "#wsee:enchantable/bow_crossbow",
   "slots": ["mainhand"],
-  "supported_items": "#minecraft:enchantable/bow",
+  "supported_items": "#wsee:enchantable/bow_crossbow",
   "weight": 2
 }
