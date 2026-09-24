@@ -20,7 +20,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.item.Rarity;
 import net.minecraft.world.item.ArrowItem;
 import net.minecraft.world.item.BowItem;
 import net.minecraft.world.item.CrossbowItem;
@@ -72,7 +71,6 @@ import net.minecraft.core.particles.ParticleType;
 import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.tags.FluidTags;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.util.Mth;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
@@ -85,7 +83,6 @@ import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEnchantItemEvent;
-import net.neoforged.neoforge.event.entity.player.ItemFishedEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.entity.ProjectileImpactEvent;
@@ -110,7 +107,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
-import java.util.EnumMap;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.lang.reflect.Field;
@@ -331,14 +327,6 @@ public final class WseeMod {
             ARMOR_PIERCING_ID, BLEEDING_ID, LONG_EDGE_ID, SURGE_ID, TETHER_ID, REBOUND_ID, HYDROSHOCK_ID,
             OVERCHARGE_ID, COMBO_STRIKE_ID, EXPLOSIVE_ARROW_ID, ARROW_RAIN_ID, TRACKING_ID, BATTLE_MOMENTUM_ID, FORCED_MARCH_ID, CLARITY_ID, EXECUTION_ID,
             FALLING_STAR_ID, SHOCK_RING_ID, SHIELD_ID, HOLY_LIGHT_ID, REFINING_ID, FOUNDATION_ID, AIR_FORCE_ID, FLYING_HOOK_ID, DOUBLE_JUMP_ID);
-    private static final TagKey<net.minecraft.world.item.Item> AIR_FORCE_FISH = TagKey.create(Registries.ITEM,
-            Identifier.fromNamespaceAndPath(MOD_ID, "air_force_fish"));
-    private static final TagKey<net.minecraft.world.item.Item> AIR_FORCE_UNOBTAINABLE = TagKey.create(Registries.ITEM,
-            Identifier.fromNamespaceAndPath(MOD_ID, "air_force_unobtainable"));
-    private static final TagKey<net.minecraft.world.item.Item> AIR_FORCE_ADMIN_BLACKLIST = TagKey.create(Registries.ITEM,
-            Identifier.fromNamespaceAndPath(MOD_ID, "air_force_admin_blacklist"));
-    private static final TagKey<net.minecraft.world.item.Item> AIR_FORCE_BLACKLIST = TagKey.create(Registries.ITEM,
-            Identifier.fromNamespaceAndPath(MOD_ID, "air_force_blacklist"));
     private static final ResourceKey<DamageType> BLEEDING_DAMAGE_TYPE = ResourceKey.create(
             Registries.DAMAGE_TYPE, Identifier.fromNamespaceAndPath(MOD_ID, "bleeding"));
     private static final ResourceKey<DamageType> EXPLOSIVE_ARROW_DAMAGE_TYPE = ResourceKey.create(
@@ -405,6 +393,7 @@ public final class WseeMod {
     private final Map<UUID, ClientFlyingHookAnchor> clientFlyingHookAnchors = new HashMap<>();
     private final Map<UUID, Boolean> doubleJumpAvailable = new HashMap<>();
     private final Map<UUID, Boolean> doubleJumpKeyDown = new HashMap<>();
+    private final Map<UUID, Integer> doubleJumpAirTicks = new HashMap<>();
     private final Map<UUID, FallingStarHit> fallingStarHits = new HashMap<>();
     private final Map<UUID, ShockRingHit> shockRingHits = new HashMap<>();
     private final List<ShockRingInstance> shockRings = new ArrayList<>();
@@ -649,7 +638,6 @@ public final class WseeMod {
         NeoForge.EVENT_BUS.addListener(this::onEntityLeave);
         NeoForge.EVENT_BUS.addListener(this::onProjectileImpact);
         NeoForge.EVENT_BUS.addListener(this::onBlockDrops);
-        NeoForge.EVENT_BUS.addListener(this::onItemFished);
         NeoForge.EVENT_BUS.addListener(this::onIncomingDamage);
         NeoForge.EVENT_BUS.addListener(this::onLivingDamagePost);
         NeoForge.EVENT_BUS.addListener(this::onEntityTick);
@@ -682,6 +670,8 @@ public final class WseeMod {
         registrar.playToClient(FlyingHookAnchorPayload.TYPE, FlyingHookAnchorPayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() ->
                         handleFlyingHookAnchor(payload, context.player())));
+        registrar.playToClient(DoubleJumpVelocityPayload.TYPE, DoubleJumpVelocityPayload.STREAM_CODEC,
+                (payload, context) -> context.enqueueWork(() -> ClientHooks.handleDoubleJumpVelocity(payload)));
     }
 
     private void onAttackEntity(AttackEntityEvent event) {
@@ -826,89 +816,6 @@ public final class WseeMod {
         }
     }
 
-    private void onItemFished(ItemFishedEvent event) {
-        if (!(event.getEntity() instanceof Player player) || player.level().isClientSide()) {
-            return;
-        }
-        ItemStack rod = player.getMainHandItem().is(Items.FISHING_ROD)
-                ? player.getMainHandItem()
-                : player.getOffhandItem();
-        if (!rod.is(Items.FISHING_ROD)) {
-            return;
-        }
-        if (enchantmentLevel(player, rod, FLYING_HOOK_ID) > 0) {
-            event.getDrops().clear();
-            return;
-        }
-        Holder<Enchantment> airForce = player.level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT)
-                .getOrThrow(ResourceKey.create(Registries.ENCHANTMENT, AIR_FORCE_ID));
-        if (EnchantmentHelper.getItemEnchantmentLevel(airForce, rod) <= 0) {
-            return;
-        }
-        Map<Rarity, List<ItemStack>> pools = new EnumMap<>(Rarity.class);
-        for (Rarity rarity : Rarity.values()) {
-            pools.put(rarity, new ArrayList<>());
-        }
-        for (net.minecraft.world.item.Item item : BuiltInRegistries.ITEM) {
-            ItemStack candidate = new ItemStack(item, 1);
-            if (item == Items.AIR || item == Items.COD || item == Items.SALMON
-                    || item == Items.TROPICAL_FISH || item == Items.PUFFERFISH
-                    || candidate.is(AIR_FORCE_FISH) || candidate.is(AIR_FORCE_UNOBTAINABLE)
-                    || candidate.is(AIR_FORCE_ADMIN_BLACKLIST) || candidate.is(AIR_FORCE_BLACKLIST)
-                    || isAirForceBuiltInBlacklist(item)) {
-                continue;
-            }
-            if (!candidate.isEmpty()) {
-                pools.get(candidate.getRarity()).add(candidate);
-            }
-        }
-        int luckLevel = EnchantmentHelper.getItemEnchantmentLevel(
-                player.level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.LUCK_OF_THE_SEA), rod);
-        List<ItemStack> candidates = airForcePoolForRoll(pools, luckLevel, player.getRandom().nextDouble());
-        if (candidates.isEmpty()) {
-            // A modded registry may expose an unusual rarity set. Keep Air
-            // Force functional by falling back to every validated candidate.
-            candidates = pools.values().stream().flatMap(List::stream).toList();
-            if (candidates.isEmpty()) {
-                return;
-            }
-        }
-        ItemStack selected = candidates.get(player.getRandom().nextInt(candidates.size()));
-        event.getDrops().clear();
-        event.getDrops().add(selected);
-        if (player.level() instanceof ServerLevel serverLevel) {
-            serverLevel.sendParticles(ParticleTypes.ENCHANT,
-                    player.getX(), player.getY() + 1.0D, player.getZ(), 4, 0.3D, 0.4D, 0.3D, 0.02D);
-            serverLevel.playSound(null, player.blockPosition(), SoundEvents.EXPERIENCE_ORB_PICKUP,
-                    SoundSource.PLAYERS, 0.35F,
-                    selected.getRarity() == Rarity.EPIC ? 1.4F : selected.getRarity() == Rarity.RARE ? 1.15F : 1.0F);
-        }
-    }
-
-    private static List<ItemStack> airForcePoolForRoll(Map<Rarity, List<ItemStack>> pools, int luckLevel, double roll) {
-        int level = Mth.clamp(luckLevel, 0, 3);
-        double epic = level == 0 ? 0.01D : level == 1 ? 0.015D : level == 2 ? 0.025D : 0.04D;
-        double rare = level == 0 ? 0.05D : level == 1 ? 0.065D : level == 2 ? 0.085D : 0.11D;
-        double uncommon = level == 0 ? 0.12D : level == 1 ? 0.14D : level == 2 ? 0.16D : 0.18D;
-        Rarity selected = roll < epic ? Rarity.EPIC : roll < epic + rare ? Rarity.RARE
-                : roll < epic + rare + uncommon ? Rarity.UNCOMMON : Rarity.COMMON;
-        for (Rarity fallback : new Rarity[] { selected, Rarity.RARE, Rarity.UNCOMMON, Rarity.COMMON }) {
-            List<ItemStack> pool = pools.get(fallback);
-            if (pool != null && !pool.isEmpty()) {
-                return pool;
-            }
-        }
-        return List.of();
-    }
-
-    private static boolean isAirForceBuiltInBlacklist(net.minecraft.world.item.Item item) {
-        return item == Items.BEDROCK || item == Items.BARRIER || item == Items.COMMAND_BLOCK
-                || item == Items.CHAIN_COMMAND_BLOCK || item == Items.REPEATING_COMMAND_BLOCK
-                || item == Items.COMMAND_BLOCK_MINECART || item == Items.STRUCTURE_BLOCK
-                || item == Items.STRUCTURE_VOID || item == Items.JIGSAW || item == Items.DEBUG_STICK
-                || item == Items.LIGHT || item == Items.END_PORTAL_FRAME || item == Items.REINFORCED_DEEPSLATE;
-    }
-
     private void tickFlyingHook(Player player) {
         UUID id = player.getUUID();
         FlyingHookState state = flyingHooks.get(id);
@@ -951,7 +858,7 @@ public final class WseeMod {
         }
         double distance = player.position().distanceTo(anchor);
         int maxDistance = flyingHookMaxDistance(state.level);
-        if (distance > maxDistance) {
+        if (distance >= maxDistance) {
             finishFlyingHook(player, state, hook);
             return;
         }
@@ -1093,15 +1000,21 @@ public final class WseeMod {
                 || player.getAbilities().flying) {
             doubleJumpAvailable.remove(id);
             doubleJumpKeyDown.remove(id);
+            doubleJumpAirTicks.remove(id);
             return;
         }
         if (player.onGround()) {
             doubleJumpAvailable.put(id, true);
-        } else if (!doubleJumpAvailable.containsKey(id)) {
-            doubleJumpAvailable.put(id, true);
-        }
-        if (jumpPressed && player instanceof ServerPlayer serverPlayer) {
-            tryDoubleJump(serverPlayer);
+            doubleJumpAirTicks.put(id, 0);
+        } else if (doubleJumpAvailable.containsKey(id)) {
+            // The first airborne tick belongs to the vanilla jump. Wait until
+            // the server has observed that transition before accepting a new
+            // rising edge or a client payload as the second jump.
+            int airTicks = doubleJumpAirTicks.getOrDefault(id, 0);
+            if (jumpPressed && airTicks > 0 && player instanceof ServerPlayer serverPlayer) {
+                tryDoubleJump(serverPlayer);
+            }
+            doubleJumpAirTicks.put(id, Math.min(airTicks + 1, 20));
         }
     }
 
@@ -1116,6 +1029,7 @@ public final class WseeMod {
         player.setDeltaMovement(current.x, 0.65D, current.z);
         player.syncVelocity = true;
         player.connection.send(new ClientboundSetEntityMotionPacket(player));
+        player.connection.send(new DoubleJumpVelocityPayload(0.65D));
         player.fallDistance = 0.0F;
         doubleJumpAvailable.put(player.getUUID(), false);
         if (player.level() instanceof ServerLevel levelWorld) {
@@ -1548,7 +1462,8 @@ public final class WseeMod {
         int explosiveLevel = enchantmentLevel(shooter, weapon, EXPLOSIVE_ARROW_ID);
         if (explosiveLevel > 0) {
             explosiveArrows.put(arrow.getUUID(), new ExplosiveArrowState(shooter.getUUID(), explosiveLevel,
-                    shooter.getAttributeValue(Attributes.ATTACK_DAMAGE)));
+                    shooter.getAttributeValue(Attributes.ATTACK_DAMAGE)
+                            + vanillaPowerDamageBonus(shooter, weapon)));
         }
         Double recordedDrawRatio = bow ? bowDrawRatios.remove(shooter.getUUID()) : null;
         // The release event normally runs before projectile creation. Keep a
@@ -1558,13 +1473,6 @@ public final class WseeMod {
                 : recordedDrawRatio != null
                         ? recordedDrawRatio
                         : Mth.clamp(arrow.getDeltaMovement().length() / 3.0D, 0.0D, 1.0D);
-        if (bow && !generatedExpansionArrow) {
-            int arrowRainLevel = enchantmentLevel(shooter, weapon, ARROW_RAIN_ID);
-            if (arrowRainLevel > 0 && drawRatio >= 0.90D) {
-                arrowRainStates.put(arrow.getUUID(), new ArrowRainState(shooter.getUUID(), arrowRainLevel,
-                        readArrowBaseDamage(arrow), weapon, serverLevel.dimension()));
-            }
-        }
         int trackingLevel = enchantmentLevel(shooter, weapon, TRACKING_ID);
         if (trackingLevel > 0 && drawRatio >= 0.80D) {
             acquireTrackingTarget(arrow, shooter, trackingLevel, serverLevel);
@@ -1573,6 +1481,13 @@ public final class WseeMod {
             OverchargeCharge charge = overchargeCharges.remove(shooter.getUUID());
             if (charge != null) {
                 applyOvercharge(arrow, charge, serverLevel);
+            }
+        }
+        if (bow && !generatedExpansionArrow) {
+            int arrowRainLevel = enchantmentLevel(shooter, weapon, ARROW_RAIN_ID);
+            if (arrowRainLevel > 0 && drawRatio >= 0.90D) {
+                arrowRainStates.put(arrow.getUUID(), new ArrowRainState(shooter.getUUID(), arrowRainLevel,
+                        readArrowBaseDamage(arrow), weapon, serverLevel.dimension()));
             }
         }
         // EntityJoinLevelEvent also fires when an old arrow is restored from a
@@ -1597,6 +1512,7 @@ public final class WseeMod {
                     AbstractArrow extra = arrowItem.createArrow(serverLevel, projectileStack, shooter, weapon);
                     extra.setPos(arrow.position());
                     extra.shoot(velocity.x, velocity.y, velocity.z, (float) velocity.length(), 0.0F);
+                    extra.setBaseDamage(readArrowBaseDamage(arrow));
                     extra.setCritArrow(arrow.isCritArrow());
                     generatedExpansionArrows.add(extra.getUUID());
                     queue.add(new QueuedProjectile(extra, tick + i * 5L, crossbow));
@@ -1613,7 +1529,8 @@ public final class WseeMod {
             case 2 -> 0.55F;
             default -> 0.45F;
         };
-        arrow.setBaseDamage(2.0D * damageMultiplier);
+        double baseDamage = readArrowBaseDamage(arrow);
+        arrow.setBaseDamage(baseDamage * damageMultiplier);
         int count = cluster + 1;
         float angle = (float) Math.toRadians(cluster == 1 ? 4.0D : cluster == 2 ? 3.0D : 2.0D);
         Vec3 velocity = arrow.getDeltaMovement();
@@ -1625,7 +1542,7 @@ public final class WseeMod {
             AbstractArrow extra = arrowItem.createArrow(serverLevel, arrow.getPickupItemStackOrigin(), shooter, weapon);
             extra.setPos(arrow.position());
             extra.shoot(direction.x, direction.y, direction.z, (float) speed, 0.0F);
-            extra.setBaseDamage(2.0D * damageMultiplier);
+            extra.setBaseDamage(baseDamage * damageMultiplier);
             extra.setCritArrow(arrow.isCritArrow());
             generatedClusterArrows.add(extra.getUUID());
         serverLevel.addFreshEntity(extra);
@@ -1696,8 +1613,7 @@ public final class WseeMod {
                     .is(FluidTags.WATER));
         }
         Entity owner = trident.getOwner();
-        if (!(owner instanceof LivingEntity shooter)
-                || enchantmentLevel(shooter, tridentItemStack(trident), HYDROSHOCK_ID) <= 0) {
+        if (!(owner instanceof LivingEntity)) {
             return;
         }
         Vec3 impact = event.getRayTraceResult().getLocation();
@@ -1706,9 +1622,7 @@ public final class WseeMod {
             return;
         }
         state.shockwaveTriggered = true;
-        LivingEntity directTarget = event.getRayTraceResult() instanceof EntityHitResult entityHit
-                && entityHit.getEntity() instanceof LivingEntity living ? living : null;
-        triggerHydroshock(trident, level, impact, directTarget, state.hydroshockLevel);
+        triggerHydroshock(trident, level, impact, state.hydroshockLevel);
     }
 
     private boolean anchorFlyingHook(ProjectileImpactEvent event) {
@@ -1846,7 +1760,6 @@ public final class WseeMod {
 
         arrow.getPersistentData().putBoolean(DEFLECTED_KEY, true);
         arrow.setOwner(player);
-        arrow.setBaseDamage(Math.max(0.0D, readArrowBaseDamage(arrow) * 0.80D));
         Vec3 reflectedVelocity = look.normalize().scale(originalSpeed * 0.90D);
         Vec3 launchPosition = player.getEyePosition().add(look.normalize().scale(0.75D));
         arrow.setPos(launchPosition.x, launchPosition.y, launchPosition.z);
@@ -1891,6 +1804,21 @@ public final class WseeMod {
             }
         }
         return 2.0D;
+    }
+
+    /**
+     * Power is a damage-effect enchantment in 26.3. It is applied only when
+     * an arrow's normal damage event is built, so custom delayed damage must
+     * carry the same additive contribution explicitly.
+     */
+    private static double vanillaPowerDamageBonus(LivingEntity shooter, ItemStack weapon) {
+        if (weapon.isEmpty()) {
+            return 0.0D;
+        }
+        Holder<Enchantment> power = shooter.level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT)
+                .getOrThrow(Enchantments.POWER);
+        int level = EnchantmentHelper.getItemEnchantmentLevel(power, weapon);
+        return level <= 0 ? 0.0D : 1.0D + 0.5D * (level - 1);
     }
 
     private void acquireTrackingTarget(AbstractArrow arrow, LivingEntity shooter, int enchantmentLevel,
@@ -2335,12 +2263,16 @@ public final class WseeMod {
                 SoundSource.PLAYERS, 0.65F, 1.15F);
     }
 
-    private void triggerHydroshock(ThrownTrident trident, ServerLevel level, Vec3 center,
-            LivingEntity directTarget, int levelValue) {
+    private void triggerHydroshock(ThrownTrident trident, ServerLevel level, Vec3 center, int levelValue) {
         double radius = switch (levelValue) {
             case 1 -> 2.0D;
             case 2 -> 3.0D;
             default -> 4.0D;
+        };
+        double verticalRange = switch (levelValue) {
+            case 1 -> 2.0D;
+            case 2 -> 2.5D;
+            default -> 3.0D;
         };
         double strength = switch (levelValue) {
             case 1 -> 0.35D;
@@ -2352,23 +2284,41 @@ public final class WseeMod {
             case 2 -> 0.12D;
             default -> 0.16D;
         };
-        AABB box = new AABB(center, center).inflate(radius);
+        Entity owner = trident.getOwner();
+        AABB box = new AABB(center, center).inflate(radius, verticalRange, radius);
         level.getEntitiesOfClass(LivingEntity.class, box, living -> living.isAlive()
-                        && !living.isSpectator() && living != directTarget)
+                        && !living.isSpectator() && living != owner)
                 .forEach(living -> {
                     Vec3 offset = living.getBoundingBox().getCenter().subtract(center);
                     double horizontalLength = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
-                    double distance = offset.length();
-                    if (distance > radius || horizontalLength < 1.0E-6D) {
+                    AABB bounds = living.getBoundingBox();
+                    double verticalDistance = center.y < bounds.minY ? bounds.minY - center.y
+                            : center.y > bounds.maxY ? center.y - bounds.maxY : 0.0D;
+                    if (horizontalLength > radius || verticalDistance > verticalRange) {
+                        return;
+                    }
+                    Vec3 horizontal = new Vec3(offset.x, 0.0D, offset.z);
+                    if (horizontalLength < 1.0E-6D && owner != null) {
+                        horizontal = living.position().subtract(owner.position()).multiply(1.0D, 0.0D, 1.0D);
+                        horizontalLength = horizontal.length();
+                    }
+                    if (horizontalLength < 1.0E-6D) {
+                        horizontal = trident.getDeltaMovement().multiply(1.0D, 0.0D, 1.0D);
+                        horizontalLength = horizontal.length();
+                    }
+                    if (horizontalLength < 1.0E-6D) {
                         return;
                     }
                     double resistance = Mth.clamp(living.getAttributeValue(Attributes.KNOCKBACK_RESISTANCE), 0.0D, 1.0D);
                     double scale = 1.0D - resistance;
-                    Vec3 direction = new Vec3(offset.x / horizontalLength, 0.0D, offset.z / horizontalLength);
+                    Vec3 direction = horizontal.scale(1.0D / horizontalLength);
                     Vec3 current = living.getDeltaMovement();
                     living.setDeltaMovement(current.x + direction.x * strength * scale,
                             current.y + vertical * scale, current.z + direction.z * strength * scale);
                     living.syncVelocity = true;
+                    if (living instanceof ServerPlayer player) {
+                        player.connection.send(new ClientboundSetEntityMotionPacket(player));
+                    }
                 });
         int particles = switch (levelValue) {
             case 1 -> 10;
@@ -2476,6 +2426,9 @@ public final class WseeMod {
         }
         clearQueuedCrossbowShots(playerId);
         expansionShotTicks.remove(playerId);
+        doubleJumpAvailable.remove(playerId);
+        doubleJumpKeyDown.remove(playerId);
+        doubleJumpAirTicks.remove(playerId);
     }
 
     private void clearQueuedCrossbowShots(UUID playerId) {
@@ -2551,6 +2504,11 @@ public final class WseeMod {
             return;
         }
         ItemStack weapon = arrow.getWeaponItem();
+        if (arrow.getPersistentData().getBoolean(DEFLECTED_KEY).orElse(false)) {
+            // Power is applied after the arrow base damage in 26.3. Scale the
+            // completed reflected hit so the reflection multiplier covers it.
+            event.setAmount(event.getAmount() * 0.80F);
+        }
         if (weapon.getItem() instanceof CrossbowItem) {
             int level = enchantmentLevel(shooter, weapon, ARMOR_PIERCING_ID);
             if (level > 0) {
@@ -2580,8 +2538,7 @@ public final class WseeMod {
         triggerShockRing(event);
         if (event.getHealthDamage() > 0.0F
                 && event.getSource().getDirectEntity() instanceof ThrownTrident trident
-                && trident.level() instanceof ServerLevel level
-                && isThrownTridentFlightState(trident)) {
+                && trident.level() instanceof ServerLevel level) {
             captureTridentState(trident, level);
             SurgeState state = surgeStates.get(trident.getUUID());
             if (state != null && state.active && state.outbound && state.surgeLevel > 0) {
@@ -3395,6 +3352,11 @@ public final class WseeMod {
             anchorFlyingHook(hook, state, findFlyingHookImpact(hook, owner));
         }
         if (!state.pulling) {
+            double maxDistance = flyingHookMaxDistance(state.level);
+            if (owner.position().distanceToSqr(hook.position()) >= maxDistance * maxDistance) {
+                finishFlyingHook(owner, state, hook);
+                return true;
+            }
             return false;
         }
         Vec3 anchor = resolveFishingAnchor(hook, state);
