@@ -1,7 +1,6 @@
 package cn.wusheng.oatz;
 
 import net.minecraft.core.Holder;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
@@ -29,6 +28,7 @@ import java.util.Map;
 
 /** Replaces the real fishing loot before FishingHook creates item entities. */
 public final class AirForceFishing {
+    public static final String ACTIVE_KEY = "wsee_air_force_active";
     private static final Identifier AIR_FORCE_ID = Identifier.fromNamespaceAndPath(WseeMod.MOD_ID, "air_force");
     private static final Identifier FLYING_HOOK_ID = Identifier.fromNamespaceAndPath(WseeMod.MOD_ID, "flying_hook");
     private static final TagKey<Item> AIR_FORCE_FISH = itemTag("air_force_fish");
@@ -41,7 +41,7 @@ public final class AirForceFishing {
 
     public static List<ItemStack> replaceLoot(FishingHook hook, ItemStack rod, List<ItemStack> vanillaLoot) {
         Player owner = hook.getPlayerOwner();
-        if (owner == null || hook.level().isClientSide() || !rod.is(Items.FISHING_ROD)) {
+        if (owner == null || hook.level().isClientSide()) {
             return vanillaLoot;
         }
 
@@ -50,23 +50,32 @@ public final class AirForceFishing {
                 || enchantmentLevel(owner, rod, FLYING_HOOK_ID) > 0) {
             return List.of();
         }
-        if (enchantmentLevel(owner, rod, AIR_FORCE_ID) <= 0) {
+        // The hook marker is captured when the projectile is created.  The
+        // TOOL stack in the loot context remains the primary source, while
+        // the marker covers hand swaps and other enchantments that may cause
+        // the retrieve argument to be reconstructed.
+        boolean airForceActive = hook.getPersistentData().getBooleanOr(ACTIVE_KEY, false)
+                || enchantmentLevel(owner, rod, AIR_FORCE_ID) > 0
+                || enchantmentLevel(owner, activeHeldRod(owner), AIR_FORCE_ID) > 0;
+        if (!airForceActive) {
             return vanillaLoot;
         }
 
-        Map<Rarity, List<ItemStack>> pools = new EnumMap<>(Rarity.class);
-        for (Rarity rarity : Rarity.values()) {
-            pools.put(rarity, new ArrayList<>());
-        }
-        for (Item item : BuiltInRegistries.ITEM) {
-            ItemStack candidate = new ItemStack(item, 1);
-            if (!isCandidate(item, candidate)) {
-                continue;
-            }
-            pools.get(candidate.getRarity()).add(candidate);
-        }
+        return replaceLootWithAirForce(hook, owner, rod, poolsFromRegisteredItems(hook));
+    }
 
+    private static List<ItemStack> replaceLootWithAirForce(FishingHook hook, Player owner,
+                                                            ItemStack rod, Map<Rarity, List<ItemStack>> pools) {
+        if (pools.values().stream().allMatch(List::isEmpty)) {
+            return List.of();
+        }
         int luckLevel = enchantmentLevel(owner, rod, Enchantments.LUCK_OF_THE_SEA);
+        if (luckLevel <= 0) {
+            luckLevel = enchantmentLevel(owner, owner.getMainHandItem(), Enchantments.LUCK_OF_THE_SEA);
+        }
+        if (luckLevel <= 0) {
+            luckLevel = enchantmentLevel(owner, owner.getOffhandItem(), Enchantments.LUCK_OF_THE_SEA);
+        }
         List<ItemStack> candidates = poolForRoll(pools, luckLevel, owner.getRandom().nextDouble());
         if (candidates.isEmpty()) {
             candidates = pools.values().stream().flatMap(List::stream).toList();
@@ -85,6 +94,23 @@ public final class AirForceFishing {
                             : selected.getRarity() == Rarity.RARE ? 1.15F : 1.0F);
         }
         return List.of(selected);
+    }
+
+    private static Map<Rarity, List<ItemStack>> poolsFromRegisteredItems(FishingHook hook) {
+        Map<Rarity, List<ItemStack>> pools = new EnumMap<>(Rarity.class);
+        for (Rarity rarity : Rarity.values()) {
+            pools.put(rarity, new ArrayList<>());
+        }
+        var itemLookup = hook.level().registryAccess().lookupOrThrow(Registries.ITEM);
+        itemLookup.listElements().forEach(holder -> {
+            Item item = holder.value();
+            ItemStack candidate = new ItemStack(item, 1);
+            if (!isCandidate(item, candidate)) {
+                return;
+            }
+            pools.get(candidate.getRarity()).add(candidate);
+        });
+        return pools;
     }
 
     private static boolean isCandidate(Item item, ItemStack candidate) {
@@ -132,6 +158,16 @@ public final class AirForceFishing {
         Holder<Enchantment> enchantment = owner.level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT)
                 .getOrThrow(key);
         return EnchantmentHelper.getItemEnchantmentLevel(enchantment, rod);
+    }
+
+    private static ItemStack activeHeldRod(Player owner) {
+        if (owner.getMainHandItem().is(Items.FISHING_ROD)) {
+            return owner.getMainHandItem();
+        }
+        if (owner.getOffhandItem().is(Items.FISHING_ROD)) {
+            return owner.getOffhandItem();
+        }
+        return ItemStack.EMPTY;
     }
 
     private static TagKey<Item> itemTag(String path) {

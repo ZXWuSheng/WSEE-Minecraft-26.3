@@ -51,7 +51,7 @@ The document `无声无息-拓展附魔（Without a sound Expanded Enchantments�
 - `等级数值` must use a readable table whenever levels or numeric values exist. Command information must also use a two-column table (`命令` / `作用`).
 - Section titles use the existing Heading 1 style. Subsection titles use the existing blue Heading 2 style. Rule details use the existing `List Bullet` style.
 - Table headers use a dark blue fill with bold white text. Body text and table text use the same document font, `微软雅黑`.
-- Keep all entries under the correct version section. The current release is `WSEE 0.1.0`; all current enchantment entries belong to its `WSEE 0.1.0` section unless a later version is explicitly created.
+- Keep all entries under the correct version section. The current release is `WSEE 0.1.1`; all current enchantment entries belong to its `WSEE 0.1.1` section unless a later version is explicitly created.
 - The Chinese name of the shield enchantment must be written as `“闪”`; its English name is `Deflect`. There is no custom mace enchantment.
 - After editing, validate that the DOCX opens successfully and that its internal XML is well-formed before handing it off.
 
@@ -98,8 +98,8 @@ All WSEE enchantments are custom, equipment-specific enchantments. Their data de
 
 ### Version, build, and launch safeguards
 
-- The current mod identity is `WSEE 0.1.0`, display name `无声无息：拓展附魔（Without a sound: Expanded Enchantments）`, author `ZX_Wu_Sheng`, and mod id `wsee`. Credits are `KsqsnK，Badnng，Wangmeili，Niorris`. Do not reintroduce OATZ as the public display name.
-- All current enchantment entries are filed under the WSEE 0.1.0 section. Keep the document's version sections and the README enchantment count synchronized.
+- The current mod identity is `WSEE 0.1.1`, display name `无声无息：拓展附魔（Without a sound: Expanded Enchantments）`, author `ZX_Wu_Sheng`, and mod id `wsee`. Credits are `KsqsnK，Badnng，Wangmeili，Niorris`. Do not reintroduce OATZ as the public display name.
+- All current enchantment entries are filed under the WSEE 0.1.1 section. Keep the document's version sections and the README enchantment count synchronized.
 - After source or resource changes, run a clean build with Java 25, validate every JSON resource, inspect the JAR entries, calculate its SHA-256, and copy the resulting JAR to the test instance mods directory.
 - Do not start the Minecraft client automatically. The user launches the client manually; report build and validation results without opening PCL or a test world.
 
@@ -140,12 +140,12 @@ All WSEE enchantments are custom, equipment-specific enchantments. Their data de
 
 ### Platform-specific artifact names
 
-- NeoForge builds must produce `build/libs/WSEE-0.1.0-NeoForge.jar`.
-- Fabric builds must produce `build/libs/WSEE-0.1.0-Fabric.jar`.
-- Keep the platform suffix when copying, uploading, or documenting artifacts; never describe either platform's current output as the unsuffixed `WSEE-0.1.0.jar`.
+- NeoForge builds must produce `build/libs/WSEE-0.1.1-NeoForge.jar`.
+- Fabric builds must produce `build/libs/WSEE-0.1.1-Fabric.jar`.
+- Keep the platform suffix when copying, uploading, or documenting artifacts; never describe either platform's current output as the unsuffixed `WSEE-0.1.1.jar`.
 
 ### Dual-loader specification document
 
-- The formal current specification is `WSEE-0.1.0-Minecraft-26.3-Fabric-NeoForge-详细规格.docx` at the repository root.
+- The formal current specification is `WSEE-0.1.1-Minecraft-26.3-Fabric-NeoForge-详细规格.docx` at the repository root.
 - The document must cover both NeoForge `26.3.0.6-beta` and Fabric Loader `0.19.5` with Fabric API `0.158.0+26.3`. Both loaders share the `wsee` IDs, language keys, data tags, equipment restrictions, conflicts, numeric values, and behavior contract; only loader integration details may differ.
 - Keep the document's 31-enchantment inventory synchronized with source, resources, README, and both loader metadata files. Do not present the old single-loader document as the current specification.

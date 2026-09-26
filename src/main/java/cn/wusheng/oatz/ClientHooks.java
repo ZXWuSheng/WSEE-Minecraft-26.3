@@ -84,7 +84,7 @@ public final class ClientHooks {
         boolean down = minecraft.options.keyJump.isDown();
         if (down && !jumpKeyWasDown && !onGround && !doubleJumpWasOnGround
                 && WseeMod.hasDoubleJump(minecraft.player)) {
-            ClientPacketDistributor.sendToServer(new DoubleJumpPayload());
+            sendDoubleJumpPayload(minecraft.player);
         }
         jumpKeyWasDown = down;
         doubleJumpWasOnGround = onGround;
@@ -167,8 +167,10 @@ public final class ClientHooks {
         if (player == null) {
             return;
         }
-        var current = player.getDeltaMovement();
-        player.setDeltaMovement(current.x, payload.yVelocity(), current.z);
+        player.setDeltaMovement(payload.xVelocity(), payload.yVelocity(), payload.zVelocity());
+        if (payload.sprinting()) {
+            player.setSprinting(true);
+        }
         player.fallDistance = 0.0F;
     }
 
@@ -208,7 +210,12 @@ public final class ClientHooks {
         }
         jumpKeyWasDown = true;
         if (!minecraft.player.onGround()) {
-            ClientPacketDistributor.sendToServer(new DoubleJumpPayload());
+            sendDoubleJumpPayload(minecraft.player);
         }
+    }
+
+    private static void sendDoubleJumpPayload(LocalPlayer player) {
+        var motion = player.getDeltaMovement();
+        ClientPacketDistributor.sendToServer(new DoubleJumpPayload(motion.x, motion.z, player.isSprinting()));
     }
 }

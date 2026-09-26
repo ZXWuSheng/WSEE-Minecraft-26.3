@@ -394,6 +394,7 @@ public final class WseeMod {
     private final Map<UUID, Boolean> doubleJumpAvailable = new HashMap<>();
     private final Map<UUID, Boolean> doubleJumpKeyDown = new HashMap<>();
     private final Map<UUID, Integer> doubleJumpAirTicks = new HashMap<>();
+    private final Map<UUID, Vec3> doubleJumpInitialHorizontalVelocity = new HashMap<>();
     private final Map<UUID, FallingStarHit> fallingStarHits = new HashMap<>();
     private final Map<UUID, ShockRingHit> shockRingHits = new HashMap<>();
     private final List<ShockRingInstance> shockRings = new ArrayList<>();
@@ -662,7 +663,7 @@ public final class WseeMod {
         registrar.playToServer(DoubleJumpPayload.TYPE, DoubleJumpPayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() -> {
                     if (context.player() instanceof ServerPlayer player) {
-                        tryDoubleJump(player);
+                        tryDoubleJump(player, payload.sprinting(), payload.xVelocity(), payload.zVelocity());
                     }
                 }));
         registrar.playToClient(TrackingTargetPayload.TYPE, TrackingTargetPayload.STREAM_CODEC,
@@ -1001,6 +1002,7 @@ public final class WseeMod {
             doubleJumpAvailable.remove(id);
             doubleJumpKeyDown.remove(id);
             doubleJumpAirTicks.remove(id);
+            doubleJumpInitialHorizontalVelocity.remove(id);
             return;
         }
         if (player.onGround()) {
@@ -1011,14 +1013,20 @@ public final class WseeMod {
             // the server has observed that transition before accepting a new
             // rising edge or a client payload as the second jump.
             int airTicks = doubleJumpAirTicks.getOrDefault(id, 0);
+            if (airTicks == 0) {
+                Vec3 motion = player.getDeltaMovement();
+                doubleJumpInitialHorizontalVelocity.put(id, new Vec3(motion.x, 0.0D, motion.z));
+            }
             if (jumpPressed && airTicks > 0 && player instanceof ServerPlayer serverPlayer) {
-                tryDoubleJump(serverPlayer);
+                Vec3 motion = serverPlayer.getDeltaMovement();
+                tryDoubleJump(serverPlayer, serverPlayer.isSprinting(), motion.x, motion.z);
             }
             doubleJumpAirTicks.put(id, Math.min(airTicks + 1, 20));
         }
     }
 
-    private void tryDoubleJump(ServerPlayer player) {
+    private void tryDoubleJump(ServerPlayer player, boolean requestedSprinting,
+            double requestedX, double requestedZ) {
         int level = enchantmentLevel(player, player.getItemBySlot(EquipmentSlot.FEET), DOUBLE_JUMP_ID);
         if (level <= 0 || player.onGround() || player.isSpectator() || player.isSwimming()
                 || player.isPassenger() || player.isFallFlying() || player.getAbilities().flying
@@ -1026,10 +1034,27 @@ public final class WseeMod {
             return;
         }
         Vec3 current = player.getDeltaMovement();
-        player.setDeltaMovement(current.x, 0.65D, current.z);
+        Vec3 initial = doubleJumpInitialHorizontalVelocity.get(player.getUUID());
+        double x = initial != null ? initial.x : (Double.isFinite(requestedX) ? requestedX : current.x);
+        double z = initial != null ? initial.z : (Double.isFinite(requestedZ) ? requestedZ : current.z);
+        double requestedSpeed = Math.sqrt(x * x + z * z);
+        double maxSpeed = Math.max(1.0D, Math.sqrt(current.x * current.x + current.z * current.z) * 3.0D + 0.25D);
+        if (requestedSpeed > maxSpeed) {
+            double scale = maxSpeed / requestedSpeed;
+            x *= scale;
+            z *= scale;
+        }
+        // Preserve the sprint state across the server validated air jump. The client
+        // can send the state one tick before the server's movement command arrives.
+        boolean sprinting = requestedSprinting && requestedSpeed > 0.03D && !player.isCrouching()
+                && !player.isUsingItem();
+        if (sprinting) {
+            player.setSprinting(true);
+        }
+        player.setDeltaMovement(x, 0.65D, z);
         player.syncVelocity = true;
         player.connection.send(new ClientboundSetEntityMotionPacket(player));
-        player.connection.send(new DoubleJumpVelocityPayload(0.65D));
+        player.connection.send(new DoubleJumpVelocityPayload(x, 0.65D, z, sprinting));
         player.fallDistance = 0.0F;
         doubleJumpAvailable.put(player.getUUID(), false);
         if (player.level() instanceof ServerLevel levelWorld) {
@@ -1554,6 +1579,12 @@ public final class WseeMod {
                 || !(hook.getOwner() instanceof Player owner) || !(hook.level() instanceof ServerLevel level)) {
             return;
         }
+        // Capture the enchantment state on the real hook.  retrieve(ItemStack)
+        // can later receive a reconstructed stack or a different hand's rod;
+        // this marker keeps Air Force authoritative for the entire cast.
+        boolean airForceActive = enchantmentLevel(owner, owner.getMainHandItem(), AIR_FORCE_ID) > 0
+                || enchantmentLevel(owner, owner.getOffhandItem(), AIR_FORCE_ID) > 0;
+        hook.getPersistentData().putBoolean(AirForceFishing.ACTIVE_KEY, airForceActive);
         InteractionHand hand = InteractionHand.MAIN_HAND;
         int flyingLevel = enchantmentLevel(owner, owner.getMainHandItem(), FLYING_HOOK_ID);
         if (flyingLevel <= 0) {
@@ -2429,6 +2460,7 @@ public final class WseeMod {
         doubleJumpAvailable.remove(playerId);
         doubleJumpKeyDown.remove(playerId);
         doubleJumpAirTicks.remove(playerId);
+        doubleJumpInitialHorizontalVelocity.remove(playerId);
     }
 
     private void clearQueuedCrossbowShots(UUID playerId) {
