@@ -106,6 +106,33 @@ class RegressionBaseline(unittest.TestCase):
                 self.assertEqual(equipment, definition["primary_items"])
                 self.assertEqual(equipment, definition["supported_items"])
 
+    def test_java_registry_matches_resource_ids(self):
+        source = (ROOT / "src/main/java/cn/wusheng/oatz/registry/ModEnchantments.java").read_text(encoding="utf-8")
+        declarations = dict(re.findall(
+            r'(\w+_ID)\s*=\s*Identifier\.fromNamespaceAndPath\(MOD_ID,\s*"([a-z_]+)"\)',
+            source,
+        ))
+        inventory = source.split("OATZ_ENCHANTMENT_IDS = List.of(", 1)[1].split(");", 1)[0]
+        registered = re.findall(r"\b[A-Z_]+_ID\b", inventory)
+        self.assertEqual(31, len(registered))
+        self.assertEqual(31, len(set(registered)))
+        self.assertEqual(set(EXPECTED), {declarations[id_name] for id_name in registered})
+        self.assertEqual(set(EXPECTED), {path.stem for path in ENCHANTMENTS.glob("*.json")})
+        for locale in ("en_us", "zh_cn"):
+            language = read_json(RESOURCES / f"assets/wsee/lang/{locale}.json")
+            self.assertEqual(set(EXPECTED), {
+                name for name in EXPECTED
+                if f"enchantment.wsee.{name}" in language
+                and f"enchantment.wsee.{name}.desc" in language
+            })
+
+    def test_damage_type_keys_match_resources(self):
+        source = (ROOT / "src/main/java/cn/wusheng/oatz/registry/ModDamageTypes.java").read_text(encoding="utf-8")
+        keys = re.findall(r'Identifier\.fromNamespaceAndPath\(MOD_ID,\s*"([a-z_]+)"\)', source)
+        self.assertEqual({"bleeding", "explosive_arrow", "shock_ring"}, set(keys))
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertEqual(set(keys), {path.stem for path in (RESOURCES / "data/wsee/damage_type").glob("*.json")})
+
     def test_custom_equipment_tags(self):
         root = RESOURCES / "data/wsee/tags/item/enchantable"
         for name, values in CUSTOM_EQUIPMENT_TAGS.items():

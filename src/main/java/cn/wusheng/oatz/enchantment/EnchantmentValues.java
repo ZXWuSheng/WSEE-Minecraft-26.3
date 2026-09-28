@@ -166,4 +166,90 @@ public final class EnchantmentValues {
         };
     }
 
+    public static double swordAuraRange(int level) {
+        return 5.0D + level;
+    }
+
+    public static double shieldAbsorptionPercent(int level) {
+        return switch (level) {
+            case 1 -> 0.08D;
+            case 2 -> 0.12D;
+            case 3 -> 0.16D;
+            case 4 -> 0.20D;
+            default -> 0.25D;
+        };
+    }
+
+    public static int shieldRefreshTicks() {
+        return 4800;
+    }
+
+    public static float holyLightTriggerThreshold() {
+        return 0.20F;
+    }
+
+    public static int holyLightDurationTicks() {
+        return 300;
+    }
+
+    public static int holyLightHealIntervalTicks() {
+        return 20;
+    }
+
+    public static double holyLightHealPercent(int level) {
+        return switch (level) {
+            case 1 -> 0.02D;
+            case 2 -> 0.025D;
+            default -> 0.03D;
+        };
+    }
+
+    public static int holyLightCooldownTicks() {
+        return 7200;
+    }
+
+    public static double fallingStarRadius(int level) {
+        return switch (level) {
+            case 1 -> 3.0D;
+            case 2 -> 4.0D;
+            default -> 5.0D;
+        };
+    }
+
+    public static float fallingStarFallThreshold() {
+        return 4.0F;
+    }
+
+    public static double shockRingRadius(int level) {
+        return switch (level) {
+            case 1 -> 3.0D;
+            case 2 -> 4.0D;
+            default -> 5.0D;
+        };
+    }
+
+    public static int surgeRequiredWaterTicks(int level) {
+        return switch (level) {
+            case 1 -> 6;
+            case 2 -> 5;
+            default -> 4;
+        };
+    }
+
+    public static double flyingHookProjectileSpeedMultiplier(int level) {
+        return 1.0D + level * 0.15D;
+    }
+
+    public static int flyingHookTimeoutTicks() {
+        return 60;
+    }
+
+    public static double doubleJumpVerticalVelocity() {
+        return 0.65D;
+    }
+
+    public static float doubleJumpSafeFallBonus() {
+        return 2.0F;
+    }
+
 }

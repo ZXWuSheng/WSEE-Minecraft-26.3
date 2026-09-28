@@ -95,9 +95,16 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.function.Supplier;
-import java.lang.reflect.Field;
 import cn.wusheng.oatz.registry.ModRegistries;
 import cn.wusheng.oatz.registry.ModNetworking;
+import cn.wusheng.oatz.projectile.TrackingHandler;
+import cn.wusheng.oatz.projectile.ArrowRainHandler;
+import cn.wusheng.oatz.projectile.ExplosiveArrowHandler;
+import cn.wusheng.oatz.combat.FrostbiteHandler;
+import cn.wusheng.oatz.projectile.CrossbowEnchantmentHandler;
+import cn.wusheng.oatz.projectile.TridentEnchantmentHandler;
+import static cn.wusheng.oatz.projectile.ArrowRainHandler.ARROW_RAIN_PROJECTILE_KEY;
+import static cn.wusheng.oatz.projectile.ProjectileRules.readArrowBaseDamage;
 import cn.wusheng.oatz.enchantment.EnchantmentApplicabilityHandler;
 import cn.wusheng.oatz.tool.RefiningHandler;
 import static cn.wusheng.oatz.registry.ModEnchantments.*;
@@ -124,17 +131,13 @@ public final class WseeMod {
     private static final String SHIELD_REMAINING_KEY = "oatz_shield_remaining";
     private static final String SHIELD_EFFECT_KEY = "oatz_shield_effect";
     private static final String SHIELD_VERSION_KEY = "oatz_shield_version";
-    private static final String EXPLOSIVE_ARROW_BOSS_TAG = "wsee:explosive_arrow_boss";
     private static final String DEFLECTED_KEY = "wsee_deflected";
-    private static final String ARROW_RAIN_PROJECTILE_KEY = "wsee_arrow_rain_projectile";
     private static final String FLYING_HOOK_LEVEL_KEY = "wsee_flying_hook_level";
-    private static final Field ARROW_BASE_DAMAGE_FIELD = findArrowBaseDamageField();
     private static final Identifier SLOW_MODIFIER_ID = Identifier.fromNamespaceAndPath(MOD_ID, "shield_bash_slow");
     private static final Identifier SHIELD_ABSORPTION_LIMIT_ID = Identifier.fromNamespaceAndPath(MOD_ID, "shield_absorption_limit");
     private static final Identifier BATTLE_MOMENTUM_MODIFIER_ID = Identifier.fromNamespaceAndPath(MOD_ID, "battle_momentum_attack_speed");
     private static final Identifier FORCED_MARCH_MODIFIER_ID = Identifier.fromNamespaceAndPath(MOD_ID, "forced_march_movement_speed");
     private static final Identifier FOUNDATION_MODIFIER_ID = Identifier.fromNamespaceAndPath(MOD_ID, "foundation_knockback_resistance");
-    private static final int SURGE_HOLD_TICKS = 20;
     private static final int BASH_COOLDOWN_TICKS = 50;
     private static final int SLOW_TICKS = 10;
     private static final int MARCH_GRACE_TICKS = 15;
@@ -146,10 +149,7 @@ public final class WseeMod {
     private final Map<UUID, Long> slowedTargets = new HashMap<>();
     private final Map<UUID, Long> swordAuraTicks = new HashMap<>();
     private final Map<UUID, SwordWaveVisual> swordWaves = new HashMap<>();
-    private final Map<UUID, ArrayDeque<QueuedProjectile>> delayedCrossbowShots = new HashMap<>();
-    private final Map<UUID, Long> expansionShotTicks = new HashMap<>();
-    private final Set<UUID> generatedClusterArrows = new HashSet<>();
-    private final Set<UUID> generatedExpansionArrows = new HashSet<>();
+    private final CrossbowEnchantmentHandler crossbowHandler = new CrossbowEnchantmentHandler();
     private final Map<UUID, UUID> bleedingAttackers = new HashMap<>();
     private final Map<UUID, Long> bleedingNextDamage = new HashMap<>();
     private final Set<UUID> bleedingDamage = new HashSet<>();
@@ -160,18 +160,18 @@ public final class WseeMod {
     private final Set<UUID> overchargeFullPlayed = new HashSet<>();
     private final Map<UUID, Integer> overchargeStages = new HashMap<>();
     private final Set<UUID> overchargeOverlayShown = new HashSet<>();
-    private final Map<UUID, SurgeState> surgeStates = new HashMap<>();
+    private final TridentEnchantmentHandler tridentHandler = new TridentEnchantmentHandler();
     private final Map<UUID, BattleMomentumState> battleMomentumStates = new HashMap<>();
     private final Map<UUID, PendingMeleeAttack> pendingMeleeAttacks = new HashMap<>();
-    private final Map<UUID, PendingFrostbiteAttack> pendingFrostbiteAttacks = new HashMap<>();
+    private final FrostbiteHandler frostbiteHandler = new FrostbiteHandler();
     private final Map<UUID, PendingComboAttack> pendingComboAttacks = new HashMap<>();
     private final Map<UUID, ComboState> comboStates = new HashMap<>();
     private final Map<UUID, Integer> comboOverlayStates = new HashMap<>();
     private final Map<UUID, ForcedMarchState> forcedMarchStates = new HashMap<>();
     private final Set<UUID> clarityActive = new HashSet<>();
-    private final Map<UUID, ExplosiveArrowState> explosiveArrows = new HashMap<>();
-    private final Map<UUID, ArrowRainState> arrowRainStates = new HashMap<>();
-    private final Map<UUID, TrackingState> trackingStates = new HashMap<>();
+    private final ExplosiveArrowHandler explosiveArrowHandler = new ExplosiveArrowHandler();
+    private final ArrowRainHandler arrowRainHandler = new ArrowRainHandler();
+    private final TrackingHandler trackingHandler = new TrackingHandler();
     private final Map<ResourceKey<Level>, Long> explosiveStateTicks = new HashMap<>();
     private final Map<UUID, FlyingHookState> flyingHooks = new HashMap<>();
     private final Map<UUID, ClientFlyingHookAnchor> clientFlyingHookAnchors = new HashMap<>();
@@ -205,10 +205,8 @@ public final class WseeMod {
         }
     }
 
-    private record QueuedProjectile(Projectile projectile, long dueTick, boolean crossbow) {}
     private record OverchargeCharge(double damageMultiplier, double velocityMultiplier) {}
     private record PendingMeleeAttack(UUID target, long tick) {}
-    private record PendingFrostbiteAttack(UUID target, long tick, ItemStack weapon) {}
     private record PendingComboAttack(UUID target, long tick, ItemStack weapon, int level, int stage) {}
     private record FallingStarHit(UUID target, long tick, int level, float fallDistance) {}
     private record ShockRingHit(UUID target, long tick, int level, float baseDamage) {}
@@ -231,11 +229,7 @@ public final class WseeMod {
             this.owner = owner;
             this.center = center;
             this.level = level;
-            this.maxRadius = switch (level) {
-                case 1 -> 3.0D;
-                case 2 -> 4.0D;
-                default -> 5.0D;
-            };
+            this.maxRadius = shockRingRadius(level);
             this.expansionSpeed = switch (level) {
                 case 1 -> 0.60D;
                 case 2 -> 0.75D;
@@ -301,86 +295,6 @@ public final class WseeMod {
             this.dimension = dimension;
         }
     }
-    private static final class ExplosiveArrowState {
-        private final UUID owner;
-        private final int level;
-        private final double attackDamage;
-        private long detonationTick;
-        private Vec3 lastPosition;
-        private UUID attachedEntity;
-        private boolean armed;
-        private boolean detonated;
-
-        private ExplosiveArrowState(UUID owner, int level, double attackDamage) {
-            this.owner = owner;
-            this.level = level;
-            this.attackDamage = attackDamage;
-        }
-    }
-    private static final class ArrowRainState {
-        private final UUID owner;
-        private final int level;
-        private final double damageBase;
-        private final ItemStack weapon;
-        private final ResourceKey<Level> dimension;
-        private Vec3 center;
-        private UUID trackingTarget;
-        private long warningUntil;
-        private long expiresAt;
-        private long nextSpawnAt;
-        private int spawned;
-        private boolean armed;
-        private boolean started;
-
-        private ArrowRainState(UUID owner, int level, double damageBase, ItemStack weapon, ResourceKey<Level> dimension) {
-            this.owner = owner;
-            this.level = level;
-            this.damageBase = damageBase;
-            this.weapon = weapon.copy();
-            this.dimension = dimension;
-        }
-    }
-    private static final class TrackingState {
-        private final UUID owner;
-        private final int level;
-        private final Vec3 initialDirection;
-        private final ResourceKey<Level> dimension;
-        private UUID target;
-        private final int targetEntityId;
-        private int ticks;
-        private boolean active = true;
-
-        private TrackingState(UUID owner, int level, Vec3 initialDirection, ResourceKey<Level> dimension,
-                UUID target, int targetEntityId) {
-            this.owner = owner;
-            this.level = level;
-            this.initialDirection = initialDirection;
-            this.dimension = dimension;
-            this.target = target;
-            this.targetEntityId = targetEntityId;
-        }
-    }
-    private static final class SurgeState {
-        private int surgeLevel;
-        private int tetherLevel;
-        private int reboundLevel;
-        private int hydroshockLevel;
-        private int waterFlightTicks;
-        private boolean active;
-        private boolean outbound = true;
-        private boolean tetherTriggered;
-        private boolean shockwaveTriggered;
-        private long lastSurgeAdvanceTick = Long.MIN_VALUE;
-        private final Set<UUID> returnHitEntities = new HashSet<>();
-        private long activeUntil;
-
-        private SurgeState(int surgeLevel, int tetherLevel, int reboundLevel, int hydroshockLevel) {
-            this.surgeLevel = surgeLevel;
-            this.tetherLevel = tetherLevel;
-            this.reboundLevel = reboundLevel;
-            this.hydroshockLevel = hydroshockLevel;
-        }
-    }
     private static final class SwordWaveVisual {
         private final UUID owner;
         private final int level;
@@ -415,7 +329,7 @@ public final class WseeMod {
         NeoForge.EVENT_BUS.addListener(EnchantmentApplicabilityHandler::onPlayerEnchantItem);
         NeoForge.EVENT_BUS.addListener(this::onAttackEntity);
         NeoForge.EVENT_BUS.addListener(this::onLeftClickEmpty);
-        NeoForge.EVENT_BUS.addListener(this::onUseItemFinish);
+        NeoForge.EVENT_BUS.addListener(crossbowHandler::onUseItemFinish);
         NeoForge.EVENT_BUS.addListener(this::onUseItemStop);
         NeoForge.EVENT_BUS.addListener(this::onProjectileJoin);
         NeoForge.EVENT_BUS.addListener(this::onFishingHookJoin);
@@ -441,11 +355,7 @@ public final class WseeMod {
                 pendingMeleeAttacks.put(attacker.getUUID(),
                         new PendingMeleeAttack(target.getUUID(), attacker.level().getGameTime()));
             }
-            if (enchantmentLevel(attacker, weapon, FROSTBITE_ID) > 0
-                    && (weapon.is(ItemTags.SWORDS) || weapon.is(ItemTags.SPEARS))) {
-                pendingFrostbiteAttacks.put(attacker.getUUID(),
-                        new PendingFrostbiteAttack(target.getUUID(), attacker.level().getGameTime(), weapon));
-            }
+            frostbiteHandler.recordAttack(attacker, target, weapon);
             recordComboAttempt(attacker, target, weapon);
         } else {
             clearCombo(attacker);
@@ -533,7 +443,7 @@ public final class WseeMod {
             state.stuckTicks = 0;
         }
         state.lastDistance = distance;
-        if (distance <= 1.5D || ++state.ticks >= 60 || state.stuckTicks >= 10) {
+        if (distance <= 1.5D || ++state.ticks >= flyingHookTimeoutTicks() || state.stuckTicks >= 10) {
             finishFlyingHook(player, state, hook);
             return;
         }
@@ -574,8 +484,7 @@ public final class WseeMod {
         if (!player.level().isClientSide()) {
             cooldowns.computeIfPresent(player.getUUID(), (id, ticks) -> ticks <= 1 ? null : ticks - 1);
             tickSlowModifier(player.level());
-            expansionShotTicks.remove(player.getUUID());
-            releaseQueuedShot(player);
+            crossbowHandler.onPlayerTick(player);
             tickChestEnchantments(player);
             tickOverchargeParticles(player);
             tickSwordWave(player);
@@ -583,8 +492,8 @@ public final class WseeMod {
                 long gameTime = serverLevel.getGameTime();
                 if (!gameTimeEquals(explosiveStateTicks.get(serverLevel.dimension()), gameTime)) {
                     explosiveStateTicks.put(serverLevel.dimension(), gameTime);
-                    tickDetachedExplosiveStates(serverLevel);
-                    tickArrowRainStates(serverLevel);
+                    explosiveArrowHandler.tickDetachedStates(serverLevel);
+                    arrowRainHandler.tickStates(serverLevel);
                     tickShockRings(serverLevel);
                 }
             }
@@ -691,10 +600,10 @@ public final class WseeMod {
         if (sprinting) {
             player.setSprinting(true);
         }
-        player.setDeltaMovement(x, 0.65D, z);
+        player.setDeltaMovement(x, doubleJumpVerticalVelocity(), z);
         player.syncVelocity = true;
         player.connection.send(new ClientboundSetEntityMotionPacket(player));
-        player.connection.send(new DoubleJumpVelocityPayload(x, 0.65D, z, sprinting));
+        player.connection.send(new DoubleJumpVelocityPayload(x, doubleJumpVerticalVelocity(), z, sprinting));
         player.fallDistance = 0.0F;
         doubleJumpAvailable.put(player.getUUID(), false);
         if (player.level() instanceof ServerLevel levelWorld) {
@@ -710,7 +619,7 @@ public final class WseeMod {
                 || enchantmentLevel(player, player.getItemBySlot(EquipmentSlot.FEET), DOUBLE_JUMP_ID) <= 0) {
             return;
         }
-        event.setDistance(Math.max(0.0F, event.getDistance() - 2.0F));
+        event.setDistance(Math.max(0.0F, event.getDistance() - doubleJumpSafeFallBonus()));
     }
 
     private static AttackRange vanillaSpearAttackRange() {
@@ -878,26 +787,20 @@ public final class WseeMod {
     }
 
     private void applyShield(Player player, int shieldLevel, long now) {
-        double percent = switch (shieldLevel) {
-            case 1 -> 0.08D;
-            case 2 -> 0.12D;
-            case 3 -> 0.16D;
-            case 4 -> 0.20D;
-            default -> 0.25D;
-        };
+        double percent = shieldAbsorptionPercent(shieldLevel);
         float shield = (float) (player.getMaxHealth() * percent);
         float previousShield = (float) player.getPersistentData().getDoubleOr(
                 SHIELD_REMAINING_KEY,
                 player.getPersistentData().getDoubleOr(SHIELD_AMOUNT_KEY, 0.0D));
         float preservedAbsorption = Math.max(0.0F, player.getAbsorptionAmount() - previousShield);
         ensureShieldAbsorptionLimit(player, shield + preservedAbsorption);
-        player.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, 4800, shieldLevel - 1,
+        player.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, shieldRefreshTicks(), shieldLevel - 1,
                 false, true, true));
         player.setAbsorptionAmount(preservedAbsorption + shield);
         player.getPersistentData().putBoolean(SHIELD_EFFECT_KEY, true);
         player.getPersistentData().putDouble(SHIELD_AMOUNT_KEY, shield);
         player.getPersistentData().putDouble(SHIELD_REMAINING_KEY, shield);
-        player.getPersistentData().putLong(SHIELD_NEXT_REFRESH_KEY, now + 4800L);
+        player.getPersistentData().putLong(SHIELD_NEXT_REFRESH_KEY, now + shieldRefreshTicks());
         if (player.level() instanceof ServerLevel level) {
             level.sendParticles(ParticleTypes.TOTEM_OF_UNDYING, player.getX(), player.getY() + 1.0D, player.getZ(),
                     24, 0.6D, 0.9D, 0.6D, 0.04D);
@@ -990,37 +893,6 @@ public final class WseeMod {
         data.remove(SHIELD_REMAINING_KEY);
     }
 
-    private void onUseItemFinish(LivingEntityUseItemEvent.Finish event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
-            return;
-        }
-        ItemStack crossbow = event.getResultStack();
-        if (!(crossbow.getItem() instanceof CrossbowItem)) {
-            return;
-        }
-        int level = enchantmentLevel(player, crossbow, EXPANSION_ID);
-        if (level <= 0) {
-            return;
-        }
-        ChargedProjectiles charged = crossbow.getOrDefault(net.minecraft.core.component.DataComponents.CHARGED_PROJECTILES,
-                ChargedProjectiles.EMPTY);
-        if (charged.isEmpty()) {
-            return;
-        }
-        List<ItemStack> projectiles = charged.itemCopies().toList();
-        int wanted = Math.min(4, level + 1);
-        while (projectiles.size() < wanted) {
-            ItemStack extra = takeArrow(player);
-            if (extra.isEmpty()) {
-                break;
-            }
-            projectiles.add(extra);
-        }
-        crossbow.set(net.minecraft.core.component.DataComponents.CHARGED_PROJECTILES,
-                ChargedProjectiles.ofNonEmpty(projectiles));
-        event.setResultStack(crossbow);
-    }
-
     private void onUseItemStop(LivingEntityUseItemEvent.Stop event) {
         if (!(event.getEntity() instanceof ServerPlayer player)
                 || !(event.getItem().getItem() instanceof BowItem)) {
@@ -1062,18 +934,6 @@ public final class WseeMod {
         clearOverchargeState(player);
     }
 
-    private ItemStack takeArrow(ServerPlayer player) {
-        for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
-            ItemStack stack = player.getInventory().getItem(slot);
-            if (stack.getItem() instanceof ArrowItem) {
-                ItemStack result = stack.copyWithCount(1);
-                stack.shrink(1);
-                return result;
-            }
-        }
-        return ItemStack.EMPTY;
-    }
-
     private void onProjectileJoin(EntityJoinLevelEvent event) {
         if (event.getLevel().isClientSide() || !(event.getEntity() instanceof AbstractArrow arrow)
                 || !(arrow.level() instanceof ServerLevel serverLevel)) {
@@ -1084,13 +944,13 @@ public final class WseeMod {
         // vanilla is updating its owner reference, so later ticks must use the
         // captured levels instead of treating that transient state as removal.
         if (arrow instanceof ThrownTrident trident) {
-            captureTridentState(trident, serverLevel);
+            tridentHandler.capture(trident, serverLevel);
         }
         if (arrow.getPersistentData().getBoolean(ARROW_RAIN_PROJECTILE_KEY).orElse(false)) {
             return;
         }
-        boolean generatedExpansionArrow = generatedExpansionArrows.remove(arrow.getUUID());
-        if (generatedClusterArrows.remove(arrow.getUUID())) {
+        boolean generatedExpansionArrow = crossbowHandler.removeGeneratedExpansion(arrow);
+        if (crossbowHandler.removeGeneratedCluster(arrow)) {
             return;
         }
         ItemStack weapon = arrow.getWeaponItem();
@@ -1104,9 +964,9 @@ public final class WseeMod {
         }
         int explosiveLevel = enchantmentLevel(shooter, weapon, EXPLOSIVE_ARROW_ID);
         if (explosiveLevel > 0) {
-            explosiveArrows.put(arrow.getUUID(), new ExplosiveArrowState(shooter.getUUID(), explosiveLevel,
+            explosiveArrowHandler.recordShot(arrow, shooter, explosiveLevel,
                     shooter.getAttributeValue(Attributes.ATTACK_DAMAGE)
-                            + vanillaPowerDamageBonus(shooter, weapon)));
+                            + vanillaPowerDamageBonus(shooter, weapon));
         }
         Double recordedDrawRatio = bow ? bowDrawRatios.remove(shooter.getUUID()) : null;
         // The release event normally runs before projectile creation. Keep a
@@ -1118,7 +978,7 @@ public final class WseeMod {
                         : Mth.clamp(arrow.getDeltaMovement().length() / 3.0D, 0.0D, 1.0D);
         int trackingLevel = enchantmentLevel(shooter, weapon, TRACKING_ID);
         if (trackingLevel > 0 && drawRatio >= 0.80D) {
-            acquireTrackingTarget(arrow, shooter, trackingLevel, serverLevel);
+            trackingHandler.acquireTarget(arrow, shooter, trackingLevel, serverLevel);
         }
         if (bow) {
             OverchargeCharge charge = overchargeCharges.remove(shooter.getUUID());
@@ -1129,67 +989,12 @@ public final class WseeMod {
         if (bow && !generatedExpansionArrow) {
             int arrowRainLevel = enchantmentLevel(shooter, weapon, ARROW_RAIN_ID);
             if (arrowRainLevel > 0 && drawRatio >= 0.90D) {
-                arrowRainStates.put(arrow.getUUID(), new ArrowRainState(shooter.getUUID(), arrowRainLevel,
-                        readArrowBaseDamage(arrow), weapon, serverLevel.dimension()));
+                arrowRainHandler.recordShot(arrow, shooter, arrowRainLevel,
+                        readArrowBaseDamage(arrow), weapon, serverLevel);
             }
         }
-        // EntityJoinLevelEvent also fires when an old arrow is restored from a
-        // world save. Only a genuinely new bow or crossbow shot may create follow-ups.
-        if (event.loadedFromDisk()) {
-            return;
-        }
-        int expansion = enchantmentLevel(shooter, weapon, EXPANSION_ID);
-        if (!generatedExpansionArrow && expansion > 0) {
-            UUID shooterId = shooter.getUUID();
-            long tick = serverLevel.getGameTime();
-            if (expansionShotTicks.putIfAbsent(shooterId, tick) == null) {
-                ArrayDeque<QueuedProjectile> queue = delayedCrossbowShots.computeIfAbsent(shooterId,
-                        id -> new ArrayDeque<>());
-                int extraCount = Math.min(3, expansion);
-                ItemStack projectileStack = arrow.getPickupItemStackOrigin();
-                Vec3 velocity = arrow.getDeltaMovement();
-                for (int i = 1; i <= extraCount; i++) {
-                    if (!(projectileStack.getItem() instanceof ArrowItem arrowItem)) {
-                        break;
-                    }
-                    AbstractArrow extra = arrowItem.createArrow(serverLevel, projectileStack, shooter, weapon);
-                    extra.setPos(arrow.position());
-                    extra.shoot(velocity.x, velocity.y, velocity.z, (float) velocity.length(), 0.0F);
-                    extra.setBaseDamage(readArrowBaseDamage(arrow));
-                    extra.setCritArrow(arrow.isCritArrow());
-                    generatedExpansionArrows.add(extra.getUUID());
-                    queue.add(new QueuedProjectile(extra, tick + i * 5L, crossbow));
-                }
-            }
-        }
-
-        int cluster = enchantmentLevel(shooter, weapon, CLUSTER_ID);
-        if (cluster <= 0 || !(arrow.getPickupItemStackOrigin().getItem() instanceof ArrowItem arrowItem)) {
-            return;
-        }
-        float damageMultiplier = switch (cluster) {
-            case 1 -> 0.70F;
-            case 2 -> 0.55F;
-            default -> 0.45F;
-        };
-        double baseDamage = readArrowBaseDamage(arrow);
-        arrow.setBaseDamage(baseDamage * damageMultiplier);
-        int count = cluster + 1;
-        float angle = (float) Math.toRadians(cluster == 1 ? 4.0D : cluster == 2 ? 3.0D : 2.0D);
-        Vec3 velocity = arrow.getDeltaMovement();
-        double speed = velocity.length();
-        Vec3 base = velocity.normalize();
-        for (int i = 1; i < count; i++) {
-            double offset = -angle + (2.0D * angle * i / (count - 1));
-            Vec3 direction = rotateAroundY(base, offset);
-            AbstractArrow extra = arrowItem.createArrow(serverLevel, arrow.getPickupItemStackOrigin(), shooter, weapon);
-            extra.setPos(arrow.position());
-            extra.shoot(direction.x, direction.y, direction.z, (float) speed, 0.0F);
-            extra.setBaseDamage(baseDamage * damageMultiplier);
-            extra.setCritArrow(arrow.isCritArrow());
-            generatedClusterArrows.add(extra.getUUID());
-        serverLevel.addFreshEntity(extra);
-    }
+        crossbowHandler.spawnFollowups(arrow, shooter, weapon, serverLevel, crossbow,
+                generatedExpansionArrow, event.loadedFromDisk());
     }
 
     private void onFishingHookJoin(EntityJoinLevelEvent event) {
@@ -1210,7 +1015,7 @@ public final class WseeMod {
             flyingLevel = enchantmentLevel(owner, owner.getOffhandItem(), FLYING_HOOK_ID);
         }
         if (flyingLevel > 0) {
-            hook.setDeltaMovement(hook.getDeltaMovement().scale(1.0D + flyingLevel * 0.15D));
+            hook.setDeltaMovement(hook.getDeltaMovement().scale(flyingHookProjectileSpeedMultiplier(flyingLevel)));
             hook.setNoGravity(true);
             hook.getPersistentData().putInt(FLYING_HOOK_LEVEL_KEY, Mth.clamp(flyingLevel, 1, 5));
             flyingHooks.put(owner.getUUID(),
@@ -1240,38 +1045,15 @@ public final class WseeMod {
         }
         if (event.getProjectile() instanceof AbstractArrow arrow
                 && arrow.level() instanceof ServerLevel arrowLevel) {
-            armExplosiveArrow(arrow, event, arrowLevel);
-            armArrowRain(arrow, event, arrowLevel);
+            explosiveArrowHandler.arm(arrow, event, arrowLevel);
+            arrowRainHandler.arm(arrow, event, arrowLevel);
         }
         if (!(event.getProjectile() instanceof ThrownTrident trident)
                 || !(trident.level() instanceof ServerLevel level)
                 || trident.noPhysics) {
             return;
         }
-        captureTridentState(trident, level);
-        SurgeState state = surgeStates.get(trident.getUUID());
-        if (state == null || !state.outbound || state.shockwaveTriggered || state.hydroshockLevel <= 0) {
-            return;
-        }
-        // ProjectileImpactEvent is raised from inside the vanilla projectile
-        // tick, before the next EntityTickEvent.Pre. Advance Surge here as
-        // well so the impact tick itself cannot be lost at the water boundary.
-        if (state.surgeLevel > 0 && isThrownTridentFlightState(trident)) {
-            advanceSurgeWaterState(trident, level, state, tridentTouchesWater(trident, level)
-                    || level.getFluidState(BlockPos.containing(event.getRayTraceResult().getLocation()))
-                    .is(FluidTags.WATER));
-        }
-        Entity owner = trident.getOwner();
-        if (!(owner instanceof LivingEntity)) {
-            return;
-        }
-        Vec3 impact = event.getRayTraceResult().getLocation();
-        if (!trident.isInWater()
-                && !level.getFluidState(net.minecraft.core.BlockPos.containing(impact)).is(net.minecraft.tags.FluidTags.WATER)) {
-            return;
-        }
-        state.shockwaveTriggered = true;
-        triggerHydroshock(trident, level, impact, state.hydroshockLevel);
+        tridentHandler.onImpact(trident, level, event);
     }
 
     private boolean anchorFlyingHook(ProjectileImpactEvent event) {
@@ -1384,7 +1166,7 @@ public final class WseeMod {
         if (!(event.getProjectile() instanceof AbstractArrow arrow)
                 || !(arrow instanceof Arrow || arrow instanceof SpectralArrow)
                 || !(arrow.level() instanceof ServerLevel level)
-                || explosiveArrows.containsKey(arrow.getUUID())
+                || explosiveArrowHandler.isRegistered(arrow)
                 || arrow.getPersistentData().getBoolean(DEFLECTED_KEY).orElse(false)
                 || !(event.getRayTraceResult() instanceof EntityHitResult entityHit)
                 || !(entityHit.getEntity() instanceof ServerPlayer player)
@@ -1434,27 +1216,6 @@ public final class WseeMod {
         return true;
     }
 
-    private static Field findArrowBaseDamageField() {
-        try {
-            Field field = AbstractArrow.class.getDeclaredField("baseDamage");
-            field.setAccessible(true);
-            return field;
-        } catch (ReflectiveOperationException exception) {
-            return null;
-        }
-    }
-
-    private static double readArrowBaseDamage(AbstractArrow arrow) {
-        if (ARROW_BASE_DAMAGE_FIELD != null) {
-            try {
-                return ARROW_BASE_DAMAGE_FIELD.getDouble(arrow);
-            } catch (IllegalAccessException ignored) {
-                // Fall through to vanilla's default when access is unavailable.
-            }
-        }
-        return 2.0D;
-    }
-
     /**
      * Power is a damage-effect enchantment in 26.3. It is applied only when
      * an arrow's normal damage event is built, so custom delayed damage must
@@ -1470,509 +1231,8 @@ public final class WseeMod {
         return level <= 0 ? 0.0D : 1.0D + 0.5D * (level - 1);
     }
 
-    private void acquireTrackingTarget(AbstractArrow arrow, LivingEntity shooter, int enchantmentLevel,
-            ServerLevel level) {
-        Vec3 motion = arrow.getDeltaMovement();
-        if (motion.lengthSqr() < 1.0E-6D) {
-            return;
-        }
-        Vec3 initial = motion.normalize();
-        double range = switch (enchantmentLevel) {
-            case 1 -> 24.0D;
-            case 2 -> 48.0D;
-            case 3 -> 72.0D;
-            default -> 72.0D;
-        };
-        double lockAngle = switch (enchantmentLevel) {
-            case 1 -> 25.0D;
-            case 2 -> 35.0D;
-            default -> 50.0D;
-        };
-        double minDot = Math.cos(lockAngle * Mth.DEG_TO_RAD);
-        Vec3 origin = arrow.position();
-        LivingEntity selected = level.getEntitiesOfClass(LivingEntity.class,
-                        shooter.getBoundingBox().inflate(range), target -> isTrackingCandidate(shooter, target))
-                .stream()
-                .filter(target -> {
-                    Vec3 targetPoint = target.getPosition(1.0F).add(0.0D, target.getBbHeight() * 0.60D, 0.0D);
-                    Vec3 toTarget = targetPoint.subtract(origin);
-                    return toTarget.lengthSqr() > 1.0E-6D && toTarget.lengthSqr() <= range * range
-                            && initial.dot(toTarget.normalize()) >= minDot
-                            && hasTrackingLineOfSight(level, origin, targetPoint, arrow);
-                })
-                .min(Comparator.comparingDouble(target -> {
-                    Vec3 toTarget = target.getPosition(1.0F).add(0.0D, target.getBbHeight() * 0.60D, 0.0D)
-                            .subtract(origin).normalize();
-                    double anglePenalty = 1.0D - initial.dot(toTarget);
-                    return anglePenalty * 100.0D + target.distanceToSqr(origin);
-                }))
-                .orElse(null);
-        if (selected != null) {
-            trackingStates.put(arrow.getUUID(),
-                    new TrackingState(shooter.getUUID(), enchantmentLevel, initial, level.dimension(), selected.getUUID(),
-                            selected.getId()));
-            sendTrackingIndicator(level, shooter, selected.getId(), true);
-            level.sendParticles(ParticleTypes.ENCHANT, arrow.getX(), arrow.getY(), arrow.getZ(),
-                    2 + enchantmentLevel, 0.10D, 0.10D, 0.10D, 0.02D);
-            level.sendParticles(ParticleTypes.END_ROD, selected.getX(), selected.getY() + selected.getBbHeight() * 0.6D,
-                    selected.getZ(), 4, 0.25D, selected.getBbHeight() * 0.35D, 0.25D, 0.01D);
-        }
-    }
-
-    private void clearTrackingState(UUID arrowId, ServerLevel level) {
-        TrackingState state = trackingStates.remove(arrowId);
-        if (state == null) {
-            return;
-        }
-        Entity owner = level.getEntity(state.owner);
-        if (owner instanceof ServerPlayer shooter) {
-            shooter.connection.send(new TrackingTargetPayload(state.targetEntityId, false));
-        }
-    }
-
-    private static void sendTrackingIndicator(ServerLevel level, LivingEntity shooter, int targetEntityId,
-            boolean glowing) {
-        if (shooter instanceof ServerPlayer player) {
-            player.connection.send(new TrackingTargetPayload(targetEntityId, glowing));
-        }
-    }
-
-    private static boolean isTrackingCandidate(LivingEntity shooter, LivingEntity target) {
-        if (target == shooter || !target.isAlive() || target.isSpectator() || target instanceof ArmorStand
-                || !target.isPickable() || shooter.isAlliedTo(target)) {
-            return false;
-        }
-        if (target instanceof Player playerTarget && shooter instanceof Player playerShooter
-                && !playerShooter.canHarmPlayer(playerTarget)) {
-            return false;
-        }
-        return true;
-    }
-
-    private static boolean hasTrackingLineOfSight(ServerLevel level, Vec3 from, Vec3 to, Entity ignored) {
-        BlockHitResult hit = level.clip(new ClipContext(from, to, ClipContext.Block.COLLIDER,
-                ClipContext.Fluid.NONE, ignored));
-        return hit.getType() == HitResult.Type.MISS || hit.getLocation().distanceToSqr(to) < 0.01D;
-    }
-
-    private void tickTracking(AbstractArrow arrow, ServerLevel level) {
-        TrackingState state = trackingStates.get(arrow.getUUID());
-        if (state == null) {
-            return;
-        }
-        if (!state.active || !state.dimension.equals(level.dimension()) || arrow.isRemoved()
-                || state.ticks >= 40) {
-            clearTrackingState(arrow.getUUID(), level);
-            return;
-        }
-        state.ticks++;
-        Entity ownerEntity = level.getEntity(state.owner);
-        Entity targetEntity = level.getEntity(state.target);
-        if (!(ownerEntity instanceof LivingEntity owner) || !(targetEntity instanceof LivingEntity target)
-                || !target.isAlive() || !isTrackingCandidate(owner, target)) {
-            state.active = false;
-            clearTrackingState(arrow.getUUID(), level);
-            return;
-        }
-        Vec3 currentVelocity = arrow.getDeltaMovement();
-        double speed = currentVelocity.length();
-        if (speed < 1.0E-6D) {
-            clearTrackingState(arrow.getUUID(), level);
-            return;
-        }
-        Vec3 currentDirection = currentVelocity.scale(1.0D / speed);
-        Vec3 targetPoint = target.getPosition(1.0F).add(0.0D, target.getBbHeight() * 0.60D, 0.0D);
-        Vec3 desired = targetPoint.subtract(arrow.position());
-        if (desired.lengthSqr() < 1.0E-6D || !hasTrackingLineOfSight(level, arrow.position(), targetPoint, arrow)) {
-            clearTrackingState(arrow.getUUID(), level);
-            return;
-        }
-        double initialLimit = Math.cos(70.0D * Mth.DEG_TO_RAD);
-        if (state.initialDirection.dot(desired.normalize()) < initialLimit) {
-            clearTrackingState(arrow.getUUID(), level);
-            return;
-        }
-        double maxTurn = switch (state.level) {
-            case 1 -> 3.0D;
-            case 2 -> 5.0D;
-            default -> 7.0D;
-        } * Mth.DEG_TO_RAD;
-        Vec3 desiredDirection = desired.normalize();
-        double angle = Math.acos(Mth.clamp(currentDirection.dot(desiredDirection), -1.0D, 1.0D));
-        double ratio = angle <= maxTurn ? 1.0D : maxTurn / angle;
-        Vec3 adjusted = currentDirection.scale(1.0D - ratio).add(desiredDirection.scale(ratio)).normalize();
-        arrow.setDeltaMovement(adjusted.scale(speed));
-        arrow.syncVelocity = true;
-        if (arrow.tickCount % 5 == 0) {
-            level.sendParticles(ParticleTypes.ENCHANT, arrow.getX(), arrow.getY(), arrow.getZ(),
-                    1, 0.03D, 0.03D, 0.03D, 0.0D);
-        }
-    }
-
-    private void armArrowRain(AbstractArrow arrow, ProjectileImpactEvent event, ServerLevel level) {
-        if (arrow.getPersistentData().getBoolean(ARROW_RAIN_PROJECTILE_KEY).orElse(false)) {
-            return;
-        }
-        ArrowRainState state = arrowRainStates.get(arrow.getUUID());
-        if (state == null || state.armed || !(arrow.getOwner() instanceof Player)) {
-            return;
-        }
-        Vec3 impact = event.getRayTraceResult().getLocation();
-        state.center = impact;
-        if (event.getRayTraceResult() instanceof EntityHitResult entityHit
-                && entityHit.getEntity() instanceof LivingEntity target) {
-            state.trackingTarget = target.getUUID();
-            state.center = target.position().add(0.0D, target.getBbHeight() * 0.5D, 0.0D);
-        }
-        long now = level.getGameTime();
-        state.warningUntil = now + 10L;
-        state.expiresAt = state.warningUntil + arrowRainDuration(state.level);
-        state.nextSpawnAt = state.warningUntil;
-        state.armed = true;
-        level.sendParticles(ParticleTypes.ENCHANT, state.center.x, state.center.y + 0.15D, state.center.z,
-                8 + state.level * 3, arrowRainRadius(state.level), 0.05D, arrowRainRadius(state.level), 0.01D);
-        level.playSound(null, BlockPos.containing(state.center), SoundEvents.ENCHANTMENT_TABLE_USE,
-                SoundSource.PLAYERS, 0.35F, 0.7F + state.level * 0.08F);
-    }
-
-    private void tickArrowRainStates(ServerLevel level) {
-        long now = level.getGameTime();
-        for (var entry : new ArrayList<>(arrowRainStates.entrySet())) {
-            ArrowRainState state = entry.getValue();
-            if (!state.dimension.equals(level.dimension())) {
-                continue;
-            }
-            Entity ownerEntity = level.getEntity(state.owner);
-            if (!(ownerEntity instanceof Player owner)) {
-                arrowRainStates.remove(entry.getKey());
-                continue;
-            }
-            if (!state.armed) {
-                if (level.getEntity(entry.getKey()) == null) {
-                    arrowRainStates.remove(entry.getKey());
-                }
-                continue;
-            }
-            if (now >= state.expiresAt) {
-                arrowRainStates.remove(entry.getKey());
-                continue;
-            }
-            if (state.trackingTarget != null && now < state.warningUntil) {
-                Entity target = level.getEntity(state.trackingTarget);
-                if (target != null && !target.isRemoved()) {
-                    state.center = target.position().add(0.0D, target.getBbHeight() * 0.5D, 0.0D);
-                }
-            }
-            if (!state.started && now >= state.warningUntil) {
-                state.started = true;
-                state.nextSpawnAt = now;
-                level.playSound(null, BlockPos.containing(state.center), SoundEvents.ARROW_SHOOT,
-                        SoundSource.PLAYERS, 0.45F, 0.65F);
-            }
-            if (!state.started || now < state.nextSpawnAt) {
-                continue;
-            }
-            int total = arrowRainCount(state.level);
-            int remaining = total - state.spawned;
-            int ticksLeft = (int) Math.max(1L, state.expiresAt - now);
-            int spawnNow = Math.max(1, (int) Math.ceil((double) remaining / ticksLeft));
-            for (int i = 0; i < spawnNow && state.spawned < total; i++) {
-                spawnArrowRainArrow(level, owner, state);
-                state.spawned++;
-            }
-            state.nextSpawnAt = now + Math.max(1L, arrowRainDuration(state.level) / total);
-            if (state.spawned >= total && now + 1L >= state.expiresAt) {
-                arrowRainStates.remove(entry.getKey());
-            }
-        }
-    }
-
-    private void spawnArrowRainArrow(ServerLevel level, Player owner, ArrowRainState state) {
-        double radius = arrowRainRadius(state.level);
-        double angle = owner.getRandom().nextDouble() * Math.PI * 2.0D;
-        double distance = radius * Math.sqrt(owner.getRandom().nextDouble());
-        double x = state.center.x + Math.cos(angle) * distance;
-        double z = state.center.z + Math.sin(angle) * distance;
-        double spawnY = findArrowRainSpawnY(level, x, state.center.y, z, owner);
-        if (Double.isNaN(spawnY)) {
-            return;
-        }
-        ArrowItem arrowItem = (ArrowItem) Items.ARROW;
-        AbstractArrow rainArrow = arrowItem.createArrow(level, new ItemStack(Items.ARROW), owner, state.weapon);
-        rainArrow.setPos(x, spawnY, z);
-        rainArrow.shoot((owner.getRandom().nextDouble() - 0.5D) * 0.08D, -1.0D,
-                (owner.getRandom().nextDouble() - 0.5D) * 0.08D, 1.5F + owner.getRandom().nextFloat() * 0.3F, 0.0F);
-        double multiplier = switch (state.level) {
-            case 1 -> 0.18D;
-            case 2 -> 0.20D;
-            default -> 0.22D;
-        };
-        rainArrow.setBaseDamage(state.damageBase * multiplier);
-        rainArrow.pickup = AbstractArrow.Pickup.DISALLOWED;
-        rainArrow.getPersistentData().putBoolean(ARROW_RAIN_PROJECTILE_KEY, true);
-        level.addFreshEntity(rainArrow);
-    }
-
-    private static double findArrowRainSpawnY(ServerLevel level, double x, double centerY, double z, Player owner) {
-        int baseY = Mth.floor(centerY + 0.5D);
-        for (int y = baseY; y <= baseY + 8; y++) {
-            BlockPos pos = BlockPos.containing(x, y, z);
-            if (!level.getBlockState(pos).getCollisionShape(level, pos).isEmpty()) {
-                double candidate = y - 0.2D;
-                BlockPos air = BlockPos.containing(x, candidate, z);
-                if (level.getBlockState(air).getCollisionShape(level, air).isEmpty()) {
-                    return candidate;
-                }
-                return Double.NaN;
-            }
-        }
-        return centerY + 6.0D + owner.getRandom().nextDouble() * 2.0D;
-    }
-
-    private void armExplosiveArrow(AbstractArrow arrow, ProjectileImpactEvent event, ServerLevel level) {
-        ExplosiveArrowState state = explosiveArrows.get(arrow.getUUID());
-        if (state == null || state.armed) {
-            return;
-        }
-        Vec3 impact = event.getRayTraceResult().getLocation();
-        state.lastPosition = impact;
-        if (event.getRayTraceResult() instanceof EntityHitResult entityHit
-                && entityHit.getEntity() instanceof LivingEntity target) {
-            state.attachedEntity = target.getUUID();
-            state.lastPosition = target.position().add(0.0D, target.getBbHeight() * 0.5D, 0.0D);
-        }
-        state.armed = true;
-        state.detonationTick = level.getGameTime() + 20L;
-        level.sendParticles(ParticleTypes.FLAME, state.lastPosition.x, state.lastPosition.y,
-                state.lastPosition.z, 2, 0.10D, 0.10D, 0.10D, 0.01D);
-        level.playSound(null, arrow.blockPosition(), SoundEvents.FLINTANDSTEEL_USE,
-                SoundSource.PLAYERS, 0.35F, 1.4F);
-    }
-
-    private void tickExplosiveArrow(AbstractArrow arrow, ServerLevel level) {
-        ExplosiveArrowState state = explosiveArrows.get(arrow.getUUID());
-        if (state == null || !state.armed || state.detonated || arrow.isRemoved()) {
-            return;
-        }
-
-        tickExplosiveState(state, level, arrow);
-        if (state.detonated) {
-            explosiveArrows.remove(arrow.getUUID());
-        }
-    }
-
-    /**
-     * Entity-hit arrows can be discarded by vanilla immediately after impact.
-     * Keep their armed state ticking so the delayed explosion still occurs.
-     */
-    private void tickDetachedExplosiveStates(ServerLevel level) {
-        long now = level.getGameTime();
-        for (var entry : new ArrayList<>(explosiveArrows.entrySet())) {
-            UUID arrowId = entry.getKey();
-            ExplosiveArrowState state = entry.getValue();
-            if (state.detonated) {
-                explosiveArrows.remove(arrowId);
-                continue;
-            }
-            Entity entity = level.getEntity(arrowId);
-            if (entity instanceof AbstractArrow arrow && !arrow.isRemoved()) {
-                continue;
-            }
-            if (!state.armed) {
-                if (entity == null) {
-                    explosiveArrows.remove(arrowId);
-                }
-                continue;
-            }
-            tickExplosiveState(state, level, null);
-            if (state.detonated || now >= state.detonationTick) {
-                explosiveArrows.remove(arrowId);
-            }
-        }
-    }
-
     private static boolean gameTimeEquals(Long previous, long current) {
         return previous != null && previous == current;
-    }
-
-    private void tickExplosiveState(ExplosiveArrowState state, ServerLevel level, AbstractArrow arrow) {
-        if (state.detonated) {
-            return;
-        }
-
-        Entity attached = state.attachedEntity == null ? null : level.getEntity(state.attachedEntity);
-        if (attached != null && !attached.isRemoved()) {
-            state.lastPosition = attached.position().add(0.0D, attached.getBbHeight() * 0.5D, 0.0D);
-        } else if (state.lastPosition == null) {
-            state.lastPosition = arrow != null ? arrow.position() : Vec3.ZERO;
-        }
-
-        long remaining = state.detonationTick - level.getGameTime();
-        long particleTick = arrow != null ? arrow.tickCount : level.getGameTime();
-        if (remaining > 0L && particleTick % (remaining <= 4L ? 1 : remaining <= 10L ? 2 : 5) == 0) {
-            Vec3 position = state.lastPosition;
-            level.sendParticles(ParticleTypes.FLAME, position.x, position.y, position.z,
-                    remaining <= 4L ? 2 : 1, 0.10D, 0.10D, 0.10D, 0.01D);
-        }
-        if (remaining <= 0L) {
-            state.detonated = true;
-            detonateExplosiveArrow(state, level);
-            if (arrow != null) {
-                arrow.discard();
-            }
-        }
-    }
-
-    private void detonateExplosiveArrow(ExplosiveArrowState state, ServerLevel level) {
-        Vec3 center = state.lastPosition == null ? Vec3.ZERO : state.lastPosition;
-        double radius = switch (state.level) {
-            case 1 -> 2.0D;
-            case 2 -> 2.5D;
-            default -> 3.0D;
-        };
-        double explosionPercent = switch (state.level) {
-            case 1 -> 0.25D;
-            case 2 -> 0.45D;
-            default -> 0.65D;
-        };
-        double knockbackStrength = switch (state.level) {
-            case 1 -> 0.25D;
-            case 2 -> 0.35D;
-            default -> 0.45D;
-        };
-        Entity owner = level.getEntity(state.owner);
-        AABB box = new AABB(center, center).inflate(radius);
-        for (LivingEntity target : level.getEntitiesOfClass(LivingEntity.class, box,
-                living -> living.isAlive() && !living.isSpectator() && living != owner)) {
-            double distance = target.getBoundingBox().getCenter().distanceTo(center);
-            if (distance > radius) {
-                continue;
-            }
-            double distanceMultiplier = 1.0D - 0.65D * Mth.clamp(distance / radius, 0.0D, 1.0D);
-            double targetMultiplier = target instanceof Player ? 0.50D : 1.0D;
-            if (target.entityTags().contains(EXPLOSIVE_ARROW_BOSS_TAG)) {
-                targetMultiplier *= 0.65D;
-            }
-            float damage = (float) Math.min(state.attackDamage * explosionPercent
-                    * distanceMultiplier * targetMultiplier, Float.MAX_VALUE);
-            if (damage > 0.0F) {
-                DamageSource source = owner != null
-                        ? level.damageSources().source(EXPLOSIVE_ARROW_DAMAGE_TYPE, owner)
-                        : level.damageSources().source(EXPLOSIVE_ARROW_DAMAGE_TYPE);
-                target.hurtServer(level, source, damage);
-            }
-
-            Vec3 offset = target.getBoundingBox().getCenter().subtract(center);
-            Vec3 horizontal = new Vec3(offset.x, 0.0D, offset.z);
-            if (horizontal.lengthSqr() < 1.0E-6D && owner != null) {
-                horizontal = target.position().subtract(owner.position());
-                horizontal = new Vec3(horizontal.x, 0.0D, horizontal.z);
-            }
-            if (horizontal.lengthSqr() > 1.0E-6D) {
-                double resistance = Mth.clamp(target.getAttributeValue(Attributes.KNOCKBACK_RESISTANCE), 0.0D, 1.0D);
-                double directTargetScale = state.attachedEntity != null
-                        && state.attachedEntity.equals(target.getUUID()) ? 0.5D : 1.0D;
-                double push = knockbackStrength * distanceMultiplier * directTargetScale * (1.0D - resistance);
-                Vec3 direction = horizontal.normalize();
-                Vec3 current = target.getDeltaMovement();
-                target.setDeltaMovement(current.x + direction.x * push,
-                        current.y + Math.min(0.12D, push * 0.25D), current.z + direction.z * push);
-                target.syncVelocity = true;
-            }
-        }
-        level.sendParticles(ParticleTypes.EXPLOSION, center.x, center.y, center.z,
-                1, 0.0D, 0.0D, 0.0D, 0.0D);
-        level.sendParticles(ParticleTypes.SMOKE, center.x, center.y, center.z,
-                8 + state.level * 6, radius * 0.30D, radius * 0.25D, radius * 0.30D, 0.04D);
-        level.playSound(null, net.minecraft.core.BlockPos.containing(center), SoundEvents.GENERIC_EXPLODE.value(),
-                SoundSource.PLAYERS, 0.65F, 1.15F);
-    }
-
-    private void triggerHydroshock(ThrownTrident trident, ServerLevel level, Vec3 center, int levelValue) {
-        double radius = switch (levelValue) {
-            case 1 -> 2.0D;
-            case 2 -> 3.0D;
-            default -> 4.0D;
-        };
-        double verticalRange = switch (levelValue) {
-            case 1 -> 2.0D;
-            case 2 -> 2.5D;
-            default -> 3.0D;
-        };
-        double strength = switch (levelValue) {
-            case 1 -> 0.35D;
-            case 2 -> 0.50D;
-            default -> 0.65D;
-        };
-        double vertical = switch (levelValue) {
-            case 1 -> 0.08D;
-            case 2 -> 0.12D;
-            default -> 0.16D;
-        };
-        Entity owner = trident.getOwner();
-        AABB box = new AABB(center, center).inflate(radius, verticalRange, radius);
-        level.getEntitiesOfClass(LivingEntity.class, box, living -> living.isAlive()
-                        && !living.isSpectator() && living != owner)
-                .forEach(living -> {
-                    Vec3 offset = living.getBoundingBox().getCenter().subtract(center);
-                    double horizontalLength = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
-                    AABB bounds = living.getBoundingBox();
-                    double verticalDistance = center.y < bounds.minY ? bounds.minY - center.y
-                            : center.y > bounds.maxY ? center.y - bounds.maxY : 0.0D;
-                    if (horizontalLength > radius || verticalDistance > verticalRange) {
-                        return;
-                    }
-                    Vec3 horizontal = new Vec3(offset.x, 0.0D, offset.z);
-                    if (horizontalLength < 1.0E-6D && owner != null) {
-                        horizontal = living.position().subtract(owner.position()).multiply(1.0D, 0.0D, 1.0D);
-                        horizontalLength = horizontal.length();
-                    }
-                    if (horizontalLength < 1.0E-6D) {
-                        horizontal = trident.getDeltaMovement().multiply(1.0D, 0.0D, 1.0D);
-                        horizontalLength = horizontal.length();
-                    }
-                    if (horizontalLength < 1.0E-6D) {
-                        return;
-                    }
-                    double resistance = Mth.clamp(living.getAttributeValue(Attributes.KNOCKBACK_RESISTANCE), 0.0D, 1.0D);
-                    double scale = 1.0D - resistance;
-                    Vec3 direction = horizontal.scale(1.0D / horizontalLength);
-                    Vec3 current = living.getDeltaMovement();
-                    living.setDeltaMovement(current.x + direction.x * strength * scale,
-                            current.y + vertical * scale, current.z + direction.z * strength * scale);
-                    living.syncVelocity = true;
-                    if (living instanceof ServerPlayer player) {
-                        player.connection.send(new ClientboundSetEntityMotionPacket(player));
-                    }
-                });
-        int particles = switch (levelValue) {
-            case 1 -> 10;
-            case 2 -> 17;
-            default -> 25;
-        };
-        level.sendParticles(ParticleTypes.SPLASH, center.x, center.y, center.z,
-                particles, radius * 0.35D, 0.20D, radius * 0.35D, 0.18D);
-        level.sendParticles(ParticleTypes.BUBBLE, center.x, center.y, center.z,
-                Math.max(4, particles / 2), radius * 0.25D, 0.20D, radius * 0.25D, 0.08D);
-        int wavePoints = 10 + levelValue * 4;
-        for (int ring = 1; ring <= 2; ring++) {
-            double ringRadius = radius * ring / 2.0D;
-            for (int point = 0; point < wavePoints; point++) {
-                double angle = (Math.PI * 2.0D * point / wavePoints) + (ring == 2 ? Math.PI / wavePoints : 0.0D);
-                double x = center.x + Math.cos(angle) * ringRadius;
-                double z = center.z + Math.sin(angle) * ringRadius;
-                level.sendParticles(ParticleTypes.SPLASH, x, center.y + 0.08D, z,
-                        1, Math.cos(angle) * 0.03D, 0.04D, Math.sin(angle) * 0.03D, 0.02D);
-            }
-        }
-        level.playSound(null, trident.blockPosition(), SoundEvents.GENERIC_SPLASH,
-                SoundSource.PLAYERS, 0.7F, 0.85F + levelValue * 0.08F);
-    }
-
-    private static Vec3 rotateAroundY(Vec3 vector, double angle) {
-        double cos = Math.cos(angle);
-        double sin = Math.sin(angle);
-        return new Vec3(vector.x * cos - vector.z * sin, vector.y, vector.x * sin + vector.z * cos).normalize();
     }
 
     private static void applyOvercharge(AbstractArrow arrow, OverchargeCharge charge, ServerLevel level) {
@@ -1992,37 +1252,6 @@ public final class WseeMod {
         int particles = (int) Math.max(2.0D, Math.round((charge.velocityMultiplier() - 1.0D) * 50.0D));
         level.sendParticles(ParticleTypes.END_ROD, origin.x, origin.y, origin.z,
                 Math.min(8, particles), 0.08D, 0.08D, 0.08D, 0.02D);
-    }
-
-    private void releaseQueuedShot(Player player) {
-        ArrayDeque<QueuedProjectile> queue = delayedCrossbowShots.get(player.getUUID());
-        if (queue == null || queue.isEmpty()) {
-            return;
-        }
-        QueuedProjectile next = queue.peek();
-        if (player.level().getGameTime() < next.dueTick()) {
-            return;
-        }
-        Projectile projectile = next.projectile();
-        // A reconnect or dimension/player replacement creates a new Player
-        // instance. Never let that session inherit shots queued by the old one.
-        if (projectile.getOwner() != player || projectile.level() != player.level()) {
-            clearQueuedCrossbowShots(player.getUUID());
-            return;
-        }
-        queue.remove();
-        double speed = projectile.getDeltaMovement().length();
-        Vec3 direction = player.getViewVector(1.0F);
-        projectile.setPos(player.getX(), player.getEyeY() - 0.1D, player.getZ());
-        projectile.shoot(direction.x, direction.y, direction.z, (float) speed, 0.0F);
-        if (player.level().addFreshEntity(projectile)) {
-            player.level().playSound(null, player.blockPosition(), next.crossbow()
-                    ? SoundEvents.CROSSBOW_SHOOT : SoundEvents.ARROW_SHOOT,
-                    SoundSource.PLAYERS, 1.0F, 1.0F);
-        }
-        if (queue.isEmpty()) {
-            delayedCrossbowShots.remove(player.getUUID());
-        }
     }
 
     private void finishFlyingHook(Player player, FlyingHookState state, FishingHook hook) {
@@ -2049,19 +1278,11 @@ public final class WseeMod {
                 flyingHooks.remove(playerId);
             }
         }
-        clearQueuedCrossbowShots(playerId);
-        expansionShotTicks.remove(playerId);
+        crossbowHandler.onPlayerLoggedOut(playerId);
         doubleJumpAvailable.remove(playerId);
         doubleJumpKeyDown.remove(playerId);
         doubleJumpAirTicks.remove(playerId);
         doubleJumpInitialHorizontalVelocity.remove(playerId);
-    }
-
-    private void clearQueuedCrossbowShots(UUID playerId) {
-        ArrayDeque<QueuedProjectile> removed = delayedCrossbowShots.remove(playerId);
-        if (removed != null) {
-            removed.forEach(shot -> generatedExpansionArrows.remove(shot.projectile().getUUID()));
-        }
     }
 
     private void onIncomingDamage(LivingIncomingDamageEvent event) {
@@ -2098,15 +1319,7 @@ public final class WseeMod {
                         * (float) comboDamageMultiplier(pending.level(), pending.stage()));
             }
         }
-        if (event.getSource().getDirectEntity() instanceof ThrownTrident trident
-                && trident.level() instanceof ServerLevel level
-                && isThrownTridentFlightState(trident)) {
-            captureTridentState(trident, level);
-            SurgeState state = surgeStates.get(trident.getUUID());
-            if (state != null && state.active && state.outbound && state.surgeLevel > 0) {
-                event.setAmount(event.getAmount() * surgeDamageMultiplier(state.surgeLevel));
-            }
-        }
+        tridentHandler.modifyIncomingDamage(event);
         if (!event.getSource().is(EXPLOSIVE_ARROW_DAMAGE_TYPE)
                 && event.getSource().getDirectEntity() instanceof Player attacker
                 && attacker.getMainHandItem().is(ItemTags.AXES)) {
@@ -2135,67 +1348,13 @@ public final class WseeMod {
             // completed reflected hit so the reflection multiplier covers it.
             event.setAmount(event.getAmount() * 0.80F);
         }
-        if (weapon.getItem() instanceof CrossbowItem) {
-            int level = enchantmentLevel(shooter, weapon, ARMOR_PIERCING_ID);
-            if (level > 0) {
-                float amount = event.getAmount();
-                float armor = event.getEntity().getArmorValue();
-                float toughness = (float) event.getEntity().getAttributeValue(Attributes.ARMOR_TOUGHNESS);
-                float normal = CombatRules.getDamageAfterAbsorb(event.getEntity(), amount, event.getSource(), armor, toughness);
-                float reducedArmor = armor * (1.0F - level * 0.10F);
-                float pierced = CombatRules.getDamageAfterAbsorb(event.getEntity(), amount, event.getSource(), reducedArmor, toughness);
-                if (normal > 0.0F && pierced > normal) {
-                    event.setAmount(amount * pierced / normal);
-                }
-            }
-        }
-        int cluster = enchantmentLevel(shooter, weapon, CLUSTER_ID);
-        int expansion = enchantmentLevel(shooter, weapon, EXPANSION_ID);
-        if (cluster > 0 || expansion > 0) {
-            // Extra arrows from cluster and expansion shots can arrive before
-            // vanilla's ten-tick hurt cooldown expires.
-            event.getEntity().setInvulnerableTime(0);
-            event.getEntity().hurtTime = 0;
-        }
+        crossbowHandler.modifyArrowDamage(event, shooter, weapon);
     }
 
     private void onLivingDamagePost(LivingDamageEvent.Post event) {
         triggerFallingStar(event);
         triggerShockRing(event);
-        if (event.getHealthDamage() > 0.0F
-                && event.getSource().getDirectEntity() instanceof ThrownTrident trident
-                && trident.level() instanceof ServerLevel level) {
-            captureTridentState(trident, level);
-            SurgeState state = surgeStates.get(trident.getUUID());
-            if (state != null && state.active && state.outbound && state.surgeLevel > 0) {
-                Vec3 motion = trident.getDeltaMovement();
-                Vec3 horizontal = new Vec3(motion.x, 0.0D, motion.z);
-                if (horizontal.lengthSqr() > 1.0E-6D) {
-                    double knockback = switch (state.surgeLevel) {
-                        case 1 -> 0.10D;
-                        case 2 -> 0.20D;
-                        default -> 0.30D;
-                    };
-                    Vec3 push = horizontal.normalize().scale(knockback);
-                    LivingEntity target = event.getEntity();
-                    Vec3 current = target.getDeltaMovement();
-                    target.setDeltaMovement(current.x + push.x, current.y, current.z + push.z);
-                    target.syncVelocity = true;
-                }
-                level.sendParticles(ParticleTypes.SPLASH, trident.getX(), trident.getY(), trident.getZ(),
-                        4 + state.surgeLevel * 4, 0.25D, 0.25D, 0.25D, 0.10D);
-                level.playSound(null, trident.blockPosition(), SoundEvents.GENERIC_SPLASH,
-                        SoundSource.PLAYERS, 0.55F, 1.0F + state.surgeLevel * 0.05F);
-            }
-            if (state != null && state.outbound && state.tetherLevel > 0
-                    && !state.tetherTriggered && event.getEntity().isAlive()
-                    && trident.getOwner() instanceof LivingEntity shooter) {
-                state.tetherTriggered = true;
-                applyTether(event.getEntity(), shooter, level, state.tetherLevel);
-                level.playSound(null, event.getEntity().blockPosition(), SoundEvents.PLAYER_SPLASH,
-                        SoundSource.PLAYERS, 0.45F, 1.35F);
-            }
-        }
+        tridentHandler.afterDamage(event);
         if (event.getEntity() instanceof ServerPlayer player && player.getHealth() > 0.0F) {
             tryTriggerHolyLight(player);
         }
@@ -2203,7 +1362,7 @@ public final class WseeMod {
                 || event.getSource().is(SHOCK_RING_DAMAGE_TYPE)) {
             return;
         }
-        applyFrostbite(event);
+        frostbiteHandler.apply(event);
         recordComboStrikeHit(event);
         recordBattleMomentumHit(event);
         if (event.getHealthDamage() <= 0.0F || bleedingDamage.contains(event.getEntity().getUUID())) {
@@ -2244,15 +1403,11 @@ public final class WseeMod {
         FallingStarHit hit = fallingStarHits.remove(attacker.getUUID());
         if (hit == null || hit.tick() != attacker.level().getGameTime()
                 || !hit.target().equals(event.getEntity().getUUID())
-                || hit.fallDistance() < 4.0F) {
+                || hit.fallDistance() < fallingStarFallThreshold()) {
             return;
         }
         LivingEntity impactTarget = event.getEntity();
-        double radius = switch (hit.level()) {
-            case 1 -> 3.0D;
-            case 2 -> 4.0D;
-            default -> 5.0D;
-        };
+        double radius = fallingStarRadius(hit.level());
         int duration = hit.level() == 1 ? 40 : 60;
         int amplifier = hit.level() == 3 ? 1 : 0;
         AABB area = impactTarget.getBoundingBox().inflate(radius);
@@ -2402,51 +1557,6 @@ public final class WseeMod {
                 level.sendParticles(ParticleTypes.CRIT, x, ring.center.y + 0.20D, z,
                         1, 0.03D, 0.03D, 0.03D, 0.01D);
             }
-        }
-    }
-
-    private void applyFrostbite(LivingDamageEvent.Post event) {
-        if (event.getHealthDamage() <= 0.0F || !(event.getSource().getDirectEntity() instanceof Player attacker)) {
-            return;
-        }
-        PendingFrostbiteAttack pending = pendingFrostbiteAttacks.remove(attacker.getUUID());
-        long now = attacker.level().getGameTime();
-        if (pending == null || pending.tick() != now || !pending.target().equals(event.getEntity().getUUID())
-                || pending.weapon() != attacker.getMainHandItem()) {
-            return;
-        }
-        ItemStack weapon = attacker.getMainHandItem();
-        if (!(weapon.is(ItemTags.SWORDS) || weapon.is(ItemTags.SPEARS))) {
-            return;
-        }
-        int level = enchantmentLevel(attacker, weapon, FROSTBITE_ID);
-        if (level <= 0) {
-            return;
-        }
-        LivingEntity target = event.getEntity();
-        if (target.canFreeze()) {
-            int amount = switch (level) {
-                case 1 -> 30;
-                case 2 -> 45;
-                default -> 60;
-            };
-            target.setTicksFrozen(Math.min(target.getTicksRequiredToFreeze(), target.getTicksFrozen() + amount));
-        }
-        int duration = level == 1 ? 40 : 60;
-        int amplifier = level == 3 ? 1 : 0;
-        MobEffectInstance existing = target.getEffect(MobEffects.SLOWNESS);
-        if (existing == null || existing.getAmplifier() <= amplifier || existing.getDuration() < duration) {
-            target.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, duration, amplifier,
-                    false, true, true));
-        }
-        if (target.level() instanceof ServerLevel serverLevel) {
-            int particles = switch (level) {
-                case 1 -> 4;
-                case 2 -> 6;
-                default -> 9;
-            };
-            serverLevel.sendParticles(ParticleTypes.SNOWFLAKE, target.getX(), target.getY() + target.getBbHeight() * 0.6D,
-                    target.getZ(), particles, 0.28D, 0.45D, 0.28D, 0.02D);
         }
     }
 
@@ -2804,12 +1914,12 @@ public final class WseeMod {
         }
         if (event.getEntity() instanceof ThrownTrident trident
                 && trident.level() instanceof ServerLevel level) {
-            tickSurge(trident, level);
+            tridentHandler.tick(trident, level);
         }
         if (event.getEntity() instanceof AbstractArrow arrow
                 && arrow.level() instanceof ServerLevel level) {
-            tickTracking(arrow, level);
-            tickExplosiveArrow(arrow, level);
+            trackingHandler.tick(arrow, level);
+            explosiveArrowHandler.tickArrow(arrow, level);
             if (arrow.getOwner() instanceof LivingEntity shooter) {
                 OverchargeCharge charge = overchargeCharges.remove(shooter.getUUID());
                 if (charge != null) {
@@ -2977,238 +2087,6 @@ public final class WseeMod {
                 ClipContext.Block.OUTLINE);
     }
 
-    private void tickSurge(ThrownTrident trident, ServerLevel level) {
-        ItemStack weapon = tridentItemStack(trident);
-        Entity owner = trident.getOwner();
-        if (!(owner instanceof LivingEntity shooter)) {
-            surgeStates.remove(trident.getUUID());
-            return;
-        }
-        int surgeLevel = enchantmentLevel(shooter, weapon, SURGE_ID);
-        int tetherLevel = enchantmentLevel(shooter, weapon, TETHER_ID);
-        int reboundLevel = enchantmentLevel(shooter, weapon, REBOUND_ID);
-        int hydroshockLevel = enchantmentLevel(shooter, weapon, HYDROSHOCK_ID);
-        SurgeState state = surgeStates.get(trident.getUUID());
-        if (state == null && surgeLevel <= 0 && tetherLevel <= 0 && reboundLevel <= 0 && hydroshockLevel <= 0) {
-            return;
-        }
-        if (trident.isRemoved()) {
-            surgeStates.remove(trident.getUUID());
-            return;
-        }
-        UUID id = trident.getUUID();
-        state = surgeStates.computeIfAbsent(id,
-                ignored -> new SurgeState(surgeLevel, tetherLevel, reboundLevel, hydroshockLevel));
-        // Never overwrite a captured enchantment with zero when vanilla briefly
-        // returns an empty stack during projectile state transitions.
-        if (surgeLevel > 0) state.surgeLevel = surgeLevel;
-        if (tetherLevel > 0) state.tetherLevel = tetherLevel;
-        if (reboundLevel > 0) state.reboundLevel = reboundLevel;
-        if (hydroshockLevel > 0) state.hydroshockLevel = hydroshockLevel;
-        if (state.outbound && trident.noPhysics) {
-            state.outbound = false;
-            state.active = false;
-            state.waterFlightTicks = 0;
-        }
-        if (!state.outbound) {
-            tickRebound(trident, shooter, state, level);
-            return;
-        }
-        if (state.surgeLevel <= 0) {
-            return;
-        }
-        long now = level.getGameTime();
-        boolean inWater = tridentTouchesWater(trident, level);
-        if (state.active) {
-            if (inWater) {
-                state.activeUntil = now + SURGE_HOLD_TICKS;
-            } else if (now >= state.activeUntil) {
-                state.active = false;
-                state.waterFlightTicks = 0;
-            }
-        } else if (inWater) {
-            advanceSurgeWaterState(trident, level, state, true);
-        } else {
-            state.waterFlightTicks = 0;
-        }
-        if (state.active && trident.tickCount % 2 == 0) {
-            int count = state.surgeLevel == 1 ? 1 : 1 + (state.surgeLevel / 3);
-            level.sendParticles(ParticleTypes.BUBBLE, trident.getX(), trident.getY(), trident.getZ(),
-                    count, 0.12D, 0.12D, 0.12D, 0.03D);
-        } else if (!state.active && inWater && trident.tickCount % Math.max(2, 6 - state.surgeLevel) == 0) {
-            level.sendParticles(ParticleTypes.BUBBLE, trident.getX(), trident.getY(), trident.getZ(),
-                    state.surgeLevel, 0.10D, 0.10D, 0.10D, 0.02D);
-        }
-    }
-
-    private static boolean isThrownTridentFlightState(ThrownTrident trident) {
-        // noPhysics is set by vanilla only after a hit, when Loyalty begins
-        // the return path. A melee trident never reaches this entity path.
-        return !trident.isRemoved() && !trident.noPhysics;
-    }
-
-    private static boolean tridentTouchesWater(ThrownTrident trident, ServerLevel level) {
-        if (trident.isInWater()) {
-            return true;
-        }
-        // During the first tick after entering water, the entity fluid flag
-        // can still be stale. Check the small voxel volume occupied by the
-        // trident so a boundary crossing is observed reliably.
-        AABB box = trident.getBoundingBox().inflate(0.05D);
-        BlockPos min = BlockPos.containing(box.minX, box.minY, box.minZ);
-        BlockPos max = BlockPos.containing(box.maxX, box.maxY, box.maxZ);
-        for (int x = min.getX(); x <= max.getX(); x++) {
-            for (int y = min.getY(); y <= max.getY(); y++) {
-                for (int z = min.getZ(); z <= max.getZ(); z++) {
-                    if (level.getFluidState(new BlockPos(x, y, z)).is(FluidTags.WATER)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    private static void advanceSurgeWaterState(ThrownTrident trident, ServerLevel level,
-            SurgeState state, boolean inWater) {
-        if (state.surgeLevel <= 0 || !state.outbound || !isThrownTridentFlightState(trident)) {
-            return;
-        }
-        long now = level.getGameTime();
-        if (state.lastSurgeAdvanceTick == now) {
-            return;
-        }
-        state.lastSurgeAdvanceTick = now;
-        if (state.active) {
-            if (inWater) {
-                state.activeUntil = now + SURGE_HOLD_TICKS;
-            } else if (now >= state.activeUntil) {
-                state.active = false;
-                state.waterFlightTicks = 0;
-            }
-            return;
-        }
-        if (!inWater) {
-            state.waterFlightTicks = 0;
-            return;
-        }
-        state.waterFlightTicks++;
-        int required = switch (state.surgeLevel) {
-            case 1 -> 6;
-            case 2 -> 5;
-            default -> 4;
-        };
-        if (state.waterFlightTicks >= required) {
-            state.active = true;
-            state.activeUntil = now + SURGE_HOLD_TICKS;
-            level.sendParticles(ParticleTypes.SPLASH, trident.getX(), trident.getY(), trident.getZ(),
-                    4 + state.surgeLevel * 4, 0.25D, 0.25D, 0.25D, 0.12D);
-            level.playSound(null, trident.blockPosition(), SoundEvents.PLAYER_SPLASH,
-                    SoundSource.PLAYERS, 0.45F, 1.1F);
-        }
-    }
-
-    private void captureTridentState(ThrownTrident trident, ServerLevel level) {
-        Entity owner = trident.getOwner();
-        if (!(owner instanceof LivingEntity shooter)) {
-            return;
-        }
-        ItemStack weapon = tridentItemStack(trident);
-        int surge = enchantmentLevel(shooter, weapon, SURGE_ID);
-        int tether = enchantmentLevel(shooter, weapon, TETHER_ID);
-        int rebound = enchantmentLevel(shooter, weapon, REBOUND_ID);
-        int hydroshock = enchantmentLevel(shooter, weapon, HYDROSHOCK_ID);
-        if (surge <= 0 && tether <= 0 && rebound <= 0 && hydroshock <= 0) {
-            return;
-        }
-        SurgeState state = surgeStates.computeIfAbsent(trident.getUUID(),
-                ignored -> new SurgeState(surge, tether, rebound, hydroshock));
-        state.surgeLevel = Math.max(state.surgeLevel, surge);
-        state.tetherLevel = Math.max(state.tetherLevel, tether);
-        state.reboundLevel = Math.max(state.reboundLevel, rebound);
-        state.hydroshockLevel = Math.max(state.hydroshockLevel, hydroshock);
-    }
-
-    private static ItemStack tridentItemStack(ThrownTrident trident) {
-        ItemStack pickup = trident.getPickupItemStackOrigin();
-        if (pickup != null && !pickup.isEmpty()) {
-            return pickup;
-        }
-        ItemStack weapon = trident.getWeaponItem();
-        return weapon == null ? ItemStack.EMPTY : weapon;
-    }
-
-    private static void applyTether(LivingEntity target, LivingEntity shooter, ServerLevel level, int levelValue) {
-        Vec3 offset = shooter.getPosition(1.0F).subtract(target.getPosition(1.0F));
-        Vec3 horizontal = new Vec3(offset.x, 0.0D, offset.z);
-        double horizontalLength = horizontal.length();
-        if (horizontalLength < 1.0E-6D) {
-            return;
-        }
-        double pullStrength = switch (levelValue) {
-            case 1 -> 0.35D;
-            case 2 -> 0.50D;
-            default -> 0.65D;
-        };
-        double resistance = Mth.clamp(target.getAttributeValue(Attributes.KNOCKBACK_RESISTANCE), 0.0D, 1.0D);
-        double scale = 1.0D - resistance;
-        Vec3 direction = horizontal.scale(1.0D / horizontalLength);
-        double vertical = Mth.clamp(offset.y / Math.max(1.0D, horizontalLength), -0.25D, 0.25D);
-        Vec3 current = target.getDeltaMovement();
-        target.setDeltaMovement(current.x + direction.x * pullStrength * scale,
-                current.y + vertical * scale, current.z + direction.z * pullStrength * scale);
-        target.syncVelocity = true;
-        int particles = switch (levelValue) {
-            case 1 -> 5;
-            case 2 -> 8;
-            default -> 12;
-        };
-        level.sendParticles(ParticleTypes.DRIPPING_WATER, target.getX(), target.getY() + target.getBbHeight() * 0.5D,
-                target.getZ(), particles, 0.25D, 0.35D, 0.25D, 0.04D);
-    }
-
-    private void tickRebound(ThrownTrident trident, LivingEntity shooter, SurgeState state, ServerLevel level) {
-        if (state.reboundLevel <= 0 || !(shooter instanceof Player)
-                || EnchantmentHelper.getItemEnchantmentLevel(
-                        level.registryAccess().lookupOrThrow(Registries.ENCHANTMENT)
-                                .getOrThrow(Enchantments.LOYALTY), tridentItemStack(trident)) <= 0) {
-            return;
-        }
-        Vec3 motion = trident.getDeltaMovement();
-        if (motion.lengthSqr() < 1.0E-6D) {
-            return;
-        }
-        AABB path = trident.getBoundingBox().expandTowards(motion).inflate(0.35D);
-        int maxHits = state.reboundLevel;
-        if (state.returnHitEntities.size() >= maxHits) {
-            return;
-        }
-        level.getEntitiesOfClass(LivingEntity.class, path, target -> target != shooter
-                        && target.isAlive() && !target.isSpectator()
-                        && !state.returnHitEntities.contains(target.getUUID()))
-                .stream()
-                .sorted(Comparator.comparingDouble(target -> target.distanceToSqr(trident)))
-                .limit(maxHits - state.returnHitEntities.size())
-                .forEach(target -> {
-                    DamageSource source = level.damageSources().trident(trident, shooter);
-                    float normalDamage = EnchantmentHelper.modifyDamage(level, tridentItemStack(trident), target, source, 8.0F);
-                    float returnMultiplier = switch (state.reboundLevel) {
-                        case 1 -> 0.30F;
-                        case 2 -> 0.45F;
-                        default -> 0.60F;
-                    };
-                    if (target.hurtServer(level, source, normalDamage * returnMultiplier)) {
-                        state.returnHitEntities.add(target.getUUID());
-                        level.sendParticles(ParticleTypes.SPLASH, target.getX(), target.getY() + target.getBbHeight() * 0.5D,
-                                target.getZ(), 4 + state.reboundLevel * 3, 0.20D, 0.30D, 0.20D, 0.08D);
-                        level.sendParticles(ParticleTypes.CRIT, target.getX(), target.getY() + target.getBbHeight() * 0.5D,
-                                target.getZ(), 2 + state.reboundLevel, 0.15D, 0.20D, 0.15D, 0.02D);
-                        level.playSound(null, target.blockPosition(), SoundEvents.TRIDENT_RETURN,
-                                SoundSource.PLAYERS, 0.45F, 1.15F);
-                    }
-                });
-    }
-
     private void tickHolyField(ServerPlayer player, ServerLevel level) {
         HolyField field = holyFields.get(player.getUUID());
         if (field == null) return;
@@ -3218,12 +2096,8 @@ public final class WseeMod {
             return;
         }
         if (now < field.nextHealAt()) return;
-        holyFields.put(player.getUUID(), new HolyField(field.center(), field.expiresAt(), now + 20L, field.level()));
-        double percent = switch (field.level()) {
-            case 1 -> 0.02D;
-            case 2 -> 0.025D;
-            default -> 0.03D;
-        };
+        holyFields.put(player.getUUID(), new HolyField(field.center(), field.expiresAt(), now + holyLightHealIntervalTicks(), field.level()));
+        double percent = holyLightHealPercent(field.level());
         player.heal((float) (player.getMaxHealth() * percent));
         level.sendParticles(ParticleTypes.HEART, player.getX(), player.getY() + 1.0D, player.getZ(),
                 3, 0.35D, 0.55D, 0.35D, 0.0D);
@@ -3319,11 +2193,11 @@ public final class WseeMod {
     private void tryTriggerHolyLight(ServerPlayer player) {
         ItemStack chest = player.getItemBySlot(EquipmentSlot.CHEST);
         int level = enchantmentLevel(player, chest, HOLY_LIGHT_ID);
-        if (level <= 0 || player.getHealth() > player.getMaxHealth() * 0.20F) return;
+        if (level <= 0 || player.getHealth() > player.getMaxHealth() * holyLightTriggerThreshold()) return;
         long now = player.level().getGameTime();
         if (now < player.getPersistentData().getLongOr(HOLY_LIGHT_NEXT_TRIGGER_KEY, 0L)) return;
-        player.getPersistentData().putLong(HOLY_LIGHT_NEXT_TRIGGER_KEY, now + 7200L);
-        holyFields.put(player.getUUID(), new HolyField(player.position(), now + 300L, now + 20L, level));
+        player.getPersistentData().putLong(HOLY_LIGHT_NEXT_TRIGGER_KEY, now + holyLightCooldownTicks());
+        holyFields.put(player.getUUID(), new HolyField(player.position(), now + holyLightDurationTicks(), now + holyLightHealIntervalTicks(), level));
         if (player.level() instanceof ServerLevel levelWorld) {
             levelWorld.sendParticles(ParticleTypes.TOTEM_OF_UNDYING, player.getX(), player.getY() + 0.8D, player.getZ(),
                     14, 0.55D, 0.8D, 0.55D, 0.03D);
@@ -3412,7 +2286,7 @@ public final class WseeMod {
         float yaw = player.getYRot() * Mth.DEG_TO_RAD;
         Vec3 direction = new Vec3(-Mth.sin(yaw), 0.0D, Mth.cos(yaw));
         // I-V reach 6, 7, 8, 9, and 10 blocks respectively.
-        double waveRange = 5.0D + levelValue;
+        double waveRange = swordAuraRange(levelValue);
         Vec3 end = start.add(direction.scale(waveRange));
         BlockHitResult blockHit = level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER,
                 ClipContext.Fluid.NONE, player));
@@ -3480,17 +2354,13 @@ public final class WseeMod {
                         // the target immediately before the synchronous damage event so the
                         // normal post-damage handler can apply Frostbite exactly once.
                         ItemStack weapon = attacker.getMainHandItem();
-                        if (enchantmentLevel(attacker, weapon, FROSTBITE_ID) > 0
-                                && (weapon.is(ItemTags.SWORDS) || weapon.is(ItemTags.SPEARS))) {
-                            pendingFrostbiteAttacks.put(attacker.getUUID(),
-                                    new PendingFrostbiteAttack(target.getUUID(), level.getGameTime(), weapon));
-                        }
+                        frostbiteHandler.recordAttack(attacker, target, weapon);
                         boolean damaged = target.hurtServer(level, level.damageSources().playerAttack(attacker),
                                 waveDamage);
                         if (damaged) {
                             wave.hitTargets.add(target.getUUID());
                         } else {
-                            pendingFrostbiteAttacks.remove(attacker.getUUID());
+                            frostbiteHandler.clearPending(attacker);
                         }
                     });
         }
