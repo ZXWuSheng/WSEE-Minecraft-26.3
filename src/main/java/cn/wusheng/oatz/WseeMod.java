@@ -27,23 +27,14 @@ import net.minecraft.world.item.MaceItem;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.component.ChargedProjectiles;
 import net.minecraft.world.item.component.AttackRange;
-import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.BlockPos;
-import net.minecraft.tags.TagKey;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
-import net.minecraft.world.item.enchantment.EnchantmentInstance;
 import net.minecraft.world.item.enchantment.Enchantments;
-import net.minecraft.world.item.crafting.RecipeHolder;
-import net.minecraft.world.item.crafting.RecipeType;
-import net.minecraft.world.item.crafting.SingleRecipeInput;
-import net.minecraft.world.item.crafting.SmeltingRecipe;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.effect.MobEffect;
-import net.minecraft.world.effect.MobEffectCategory;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.ChatFormatting;
@@ -74,15 +65,12 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
-import net.neoforged.api.distmarker.Dist;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
-import net.neoforged.neoforge.event.AnvilUpdateEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
-import net.neoforged.neoforge.event.entity.player.PlayerEnchantItemEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.entity.ProjectileImpactEvent;
@@ -91,7 +79,6 @@ import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingFallEvent;
 import net.neoforged.neoforge.event.tick.EntityTickEvent;
-import net.neoforged.neoforge.event.level.BlockDropsEvent;
 import net.neoforged.neoforge.registries.DeferredRegister;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -107,232 +94,29 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
-import java.util.Optional;
 import java.util.function.Supplier;
 import java.lang.reflect.Field;
+import cn.wusheng.oatz.registry.ModRegistries;
+import cn.wusheng.oatz.registry.ModNetworking;
+import cn.wusheng.oatz.enchantment.EnchantmentApplicabilityHandler;
+import cn.wusheng.oatz.tool.RefiningHandler;
+import static cn.wusheng.oatz.registry.ModEnchantments.*;
+import static cn.wusheng.oatz.registry.ModDamageTypes.*;
+import static cn.wusheng.oatz.enchantment.EnchantmentUtil.enchantmentLevel;
+import static cn.wusheng.oatz.enchantment.EquipmentRules.isValidEnchantmentItem;
+import static cn.wusheng.oatz.enchantment.EquipmentRules.isFootEquipment;
+import static cn.wusheng.oatz.enchantment.EnchantmentValues.*;
 
 @Mod(WseeMod.MOD_ID)
 public final class WseeMod {
     public static final String MOD_ID = "wsee";
-    public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS =
-            DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MOD_ID);
-    public static final DeferredRegister<MobEffect> MOB_EFFECTS =
-            DeferredRegister.create(Registries.MOB_EFFECT, MOD_ID);
-    public static final DeferredRegister<ParticleType<?>> PARTICLE_TYPES =
-            DeferredRegister.create(Registries.PARTICLE_TYPE, MOD_ID);
-    public static final DeferredHolder<ParticleType<?>, SimpleParticleType> SWORD_WAVE_PARTICLE =
-            PARTICLE_TYPES.register("sword_wave", () -> new SimpleParticleType(true));
-    public static final DeferredHolder<MobEffect, MobEffect> BLEEDING_EFFECT = MOB_EFFECTS.register(
-            "bleeding", () -> new MobEffect(MobEffectCategory.HARMFUL, 0xB51A2B) {
-                @Override
-                public boolean shouldApplyEffectTickThisTick(int tickCount, int amplifier) {
-                    return tickCount % 20 == 0;
-                }
-            });
-    public static final DeferredHolder<MobEffect, MobEffect> BATTLE_MOMENTUM_EFFECT = MOB_EFFECTS.register(
-            "battle_momentum", () -> new MobEffect(MobEffectCategory.BENEFICIAL, 0xF59B23) {
-            });
-    public static final Supplier<CreativeModeTab> OA_ENCHANTMENTS_TAB = CREATIVE_MODE_TABS.register(
-            "oa_enchantments", () -> CreativeModeTab.builder()
-                    .title(Component.translatable("itemGroup.wsee.enchantments").withStyle(ChatFormatting.LIGHT_PURPLE))
-                    .icon(() -> new ItemStack(Items.ENCHANTED_BOOK))
-                    .displayItems((parameters, output) -> {
-                        var enchantments = parameters.holders().lookupOrThrow(Registries.ENCHANTMENT);
-                        Holder<Enchantment> shieldBash = enchantments.getOrThrow(
-                                ResourceKey.create(Registries.ENCHANTMENT,
-                                        Identifier.fromNamespaceAndPath(MOD_ID, "shield_bash")));
-                        Holder<Enchantment> frostbite = enchantments.getOrThrow(
-                                ResourceKey.create(Registries.ENCHANTMENT,
-                                        Identifier.fromNamespaceAndPath(MOD_ID, "frostbite")));
-                        Holder<Enchantment> deflect = enchantments.getOrThrow(
-                                ResourceKey.create(Registries.ENCHANTMENT,
-                                        Identifier.fromNamespaceAndPath(MOD_ID, "deflect")));
-                        Holder<Enchantment> swordAura = enchantments.getOrThrow(
-                                ResourceKey.create(Registries.ENCHANTMENT,
-                                        Identifier.fromNamespaceAndPath(MOD_ID, "sword_aura")));
-                        Holder<Enchantment> expansion = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "expansion")));
-                        Holder<Enchantment> cluster = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "cluster")));
-                        Holder<Enchantment> armorPiercing = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "armor_piercing")));
-                        Holder<Enchantment> bleedingEnchantment = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "bleeding")));
-                        Holder<Enchantment> longEdge = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "long_edge")));
-                        Holder<Enchantment> surge = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "surge")));
-                        Holder<Enchantment> tether = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "tether")));
-                        Holder<Enchantment> rebound = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "rebound")));
-                        Holder<Enchantment> hydroshock = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "hydroshock")));
-                        Holder<Enchantment> overcharge = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "overcharge")));
-                        Holder<Enchantment> comboStrike = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "combo_strike")));
-                        Holder<Enchantment> explosiveArrow = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "explosive_arrow")));
-                        Holder<Enchantment> arrowRain = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "arrow_rain")));
-                        Holder<Enchantment> tracking = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "tracking")));
-                        Holder<Enchantment> battleMomentum = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "battle_momentum")));
-                        Holder<Enchantment> forcedMarch = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "forced_march")));
-                        Holder<Enchantment> clarity = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "clarity")));
-                        Holder<Enchantment> execution = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "execution")));
-                        Holder<Enchantment> fallingStar = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "falling_star")));
-                        Holder<Enchantment> shockRing = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "shock_ring")));
-                        Holder<Enchantment> shield = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "shield")));
-                        Holder<Enchantment> holyLight = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "holy_light")));
-                        Holder<Enchantment> refining = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "refining")));
-                        Holder<Enchantment> foundation = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "foundation")));
-                        Holder<Enchantment> airForce = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "air_force")));
-                        Holder<Enchantment> flyingHook = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "flying_hook")));
-                        Holder<Enchantment> doubleJump = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT,
-                                Identifier.fromNamespaceAndPath(MOD_ID, "double_jump")));
-                        // Match vanilla-style creative ordering: group by equipment type,
-                        // then list each enchantment's levels from I upward.
-                        for (int level = 1; level <= 5; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(swordAura, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(comboStrike, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(battleMomentum, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(execution, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(fallingStar, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(shockRing, level)));
-                        }
-                        output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(shieldBash, 1)));
-                        output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(deflect, 1)));
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(frostbite, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(bleedingEnchantment, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(longEdge, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(surge, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(tether, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(rebound, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(hydroshock, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(overcharge, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(explosiveArrow, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(arrowRain, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(tracking, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(expansion, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(cluster, level)));
-                        }
-                        for (int level = 1; level <= 4; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(armorPiercing, level)));
-                        }
-                        output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(refining, 1)));
-                        output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(clarity, 1)));
-                        for (int level = 1; level <= 5; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(forcedMarch, level)));
-                        }
-                        for (int level = 1; level <= 5; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(shield, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(holyLight, level)));
-                        }
-                        for (int level = 1; level <= 3; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(foundation, level)));
-                        }
-                        output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(airForce, 1)));
-                        for (int level = 1; level <= 5; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(flyingHook, level)));
-                        }
-                        output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(doubleJump, 1)));
-                    })
-                    .build());
-    private static final Identifier ENCHANTMENT_ID = Identifier.fromNamespaceAndPath(MOD_ID, "shield_bash");
-    private static final Identifier DEFLECT_ID = Identifier.fromNamespaceAndPath(MOD_ID, "deflect");
-    private static final Identifier FROSTBITE_ID = Identifier.fromNamespaceAndPath(MOD_ID, "frostbite");
-    private static final Identifier SWORD_AURA_ID = Identifier.fromNamespaceAndPath(MOD_ID, "sword_aura");
-    private static final Identifier EXPANSION_ID = Identifier.fromNamespaceAndPath(MOD_ID, "expansion");
-    private static final Identifier CLUSTER_ID = Identifier.fromNamespaceAndPath(MOD_ID, "cluster");
-    private static final Identifier ARMOR_PIERCING_ID = Identifier.fromNamespaceAndPath(MOD_ID, "armor_piercing");
-    private static final Identifier BLEEDING_ID = Identifier.fromNamespaceAndPath(MOD_ID, "bleeding");
-    private static final Identifier LONG_EDGE_ID = Identifier.fromNamespaceAndPath(MOD_ID, "long_edge");
-    private static final Identifier SURGE_ID = Identifier.fromNamespaceAndPath(MOD_ID, "surge");
-    private static final Identifier TETHER_ID = Identifier.fromNamespaceAndPath(MOD_ID, "tether");
-    private static final Identifier REBOUND_ID = Identifier.fromNamespaceAndPath(MOD_ID, "rebound");
-    private static final Identifier HYDROSHOCK_ID = Identifier.fromNamespaceAndPath(MOD_ID, "hydroshock");
-    private static final Identifier OVERCHARGE_ID = Identifier.fromNamespaceAndPath(MOD_ID, "overcharge");
-    private static final Identifier COMBO_STRIKE_ID = Identifier.fromNamespaceAndPath(MOD_ID, "combo_strike");
-    private static final Identifier EXPLOSIVE_ARROW_ID = Identifier.fromNamespaceAndPath(MOD_ID, "explosive_arrow");
-    private static final Identifier ARROW_RAIN_ID = Identifier.fromNamespaceAndPath(MOD_ID, "arrow_rain");
-    private static final Identifier TRACKING_ID = Identifier.fromNamespaceAndPath(MOD_ID, "tracking");
-    private static final Identifier BATTLE_MOMENTUM_ID = Identifier.fromNamespaceAndPath(MOD_ID, "battle_momentum");
-    private static final Identifier FORCED_MARCH_ID = Identifier.fromNamespaceAndPath(MOD_ID, "forced_march");
-    private static final Identifier CLARITY_ID = Identifier.fromNamespaceAndPath(MOD_ID, "clarity");
-    private static final Identifier EXECUTION_ID = Identifier.fromNamespaceAndPath(MOD_ID, "execution");
-    private static final Identifier FALLING_STAR_ID = Identifier.fromNamespaceAndPath(MOD_ID, "falling_star");
-    private static final Identifier SHOCK_RING_ID = Identifier.fromNamespaceAndPath(MOD_ID, "shock_ring");
-    private static final Identifier SHIELD_ID = Identifier.fromNamespaceAndPath(MOD_ID, "shield");
-    private static final Identifier HOLY_LIGHT_ID = Identifier.fromNamespaceAndPath(MOD_ID, "holy_light");
-    private static final Identifier REFINING_ID = Identifier.fromNamespaceAndPath(MOD_ID, "refining");
-    private static final Identifier FOUNDATION_ID = Identifier.fromNamespaceAndPath(MOD_ID, "foundation");
-    private static final Identifier AIR_FORCE_ID = Identifier.fromNamespaceAndPath(MOD_ID, "air_force");
-    private static final Identifier FLYING_HOOK_ID = Identifier.fromNamespaceAndPath(MOD_ID, "flying_hook");
-    private static final Identifier DOUBLE_JUMP_ID = Identifier.fromNamespaceAndPath(MOD_ID, "double_jump");
-    private static final TagKey<Block> REFINABLE_ORES = TagKey.create(Registries.BLOCK,
-            Identifier.fromNamespaceAndPath(MOD_ID, "refinable_ores"));
-    private static final List<Identifier> OATZ_ENCHANTMENT_IDS = List.of(
-            SWORD_AURA_ID, ENCHANTMENT_ID, DEFLECT_ID, FROSTBITE_ID, EXPANSION_ID, CLUSTER_ID,
-            ARMOR_PIERCING_ID, BLEEDING_ID, LONG_EDGE_ID, SURGE_ID, TETHER_ID, REBOUND_ID, HYDROSHOCK_ID,
-            OVERCHARGE_ID, COMBO_STRIKE_ID, EXPLOSIVE_ARROW_ID, ARROW_RAIN_ID, TRACKING_ID, BATTLE_MOMENTUM_ID, FORCED_MARCH_ID, CLARITY_ID, EXECUTION_ID,
-            FALLING_STAR_ID, SHOCK_RING_ID, SHIELD_ID, HOLY_LIGHT_ID, REFINING_ID, FOUNDATION_ID, AIR_FORCE_ID, FLYING_HOOK_ID, DOUBLE_JUMP_ID);
-    private static final ResourceKey<DamageType> BLEEDING_DAMAGE_TYPE = ResourceKey.create(
-            Registries.DAMAGE_TYPE, Identifier.fromNamespaceAndPath(MOD_ID, "bleeding"));
-    private static final ResourceKey<DamageType> EXPLOSIVE_ARROW_DAMAGE_TYPE = ResourceKey.create(
-            Registries.DAMAGE_TYPE, Identifier.fromNamespaceAndPath(MOD_ID, "explosive_arrow"));
-    private static final ResourceKey<DamageType> SHOCK_RING_DAMAGE_TYPE = ResourceKey.create(
-            Registries.DAMAGE_TYPE, Identifier.fromNamespaceAndPath(MOD_ID, "shock_ring"));
+    public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS = ModRegistries.CREATIVE_MODE_TABS;
+    public static final DeferredRegister<MobEffect> MOB_EFFECTS = ModRegistries.MOB_EFFECTS;
+    public static final DeferredRegister<ParticleType<?>> PARTICLE_TYPES = ModRegistries.PARTICLE_TYPES;
+    public static final DeferredHolder<ParticleType<?>, SimpleParticleType> SWORD_WAVE_PARTICLE = ModRegistries.SWORD_WAVE_PARTICLE;
+    public static final DeferredHolder<MobEffect, MobEffect> BLEEDING_EFFECT = ModRegistries.BLEEDING_EFFECT;
+    public static final DeferredHolder<MobEffect, MobEffect> BATTLE_MOMENTUM_EFFECT = ModRegistries.BATTLE_MOMENTUM_EFFECT;
+    public static final Supplier<CreativeModeTab> OA_ENCHANTMENTS_TAB = ModRegistries.OA_ENCHANTMENTS_TAB;
     private static final String BLEEDING_ATTACKER_KEY = "oatz_bleeding_attacker";
     private static final String SHIELD_NEXT_REFRESH_KEY = "oatz_shield_next_refresh";
     private static final String HOLY_LIGHT_NEXT_TRIGGER_KEY = "oatz_holy_light_next_trigger";
@@ -621,15 +405,14 @@ public final class WseeMod {
     }
     private record HolyField(Vec3 center, long expiresAt, long nextHealAt, int level) {}
     public WseeMod(IEventBus modBus) {
-        CREATIVE_MODE_TABS.register(modBus);
-        MOB_EFFECTS.register(modBus);
-        PARTICLE_TYPES.register(modBus);
-        modBus.addListener(this::registerPayloads);
+        ModRegistries.register(modBus);
+        modBus.addListener((RegisterPayloadHandlersEvent event) -> ModNetworking.register(event, this::shieldBash,
+                this::triggerSwordAura, this::tryDoubleJump, this::handleFlyingHookAnchor));
         NeoForge.EVENT_BUS.addListener(this::onPlayerTick);
         NeoForge.EVENT_BUS.addListener(this::onPlayerLoggedOut);
         NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
-        NeoForge.EVENT_BUS.addListener(this::onAnvilUpdate);
-        NeoForge.EVENT_BUS.addListener(this::onPlayerEnchantItem);
+        NeoForge.EVENT_BUS.addListener(EnchantmentApplicabilityHandler::onAnvilUpdate);
+        NeoForge.EVENT_BUS.addListener(EnchantmentApplicabilityHandler::onPlayerEnchantItem);
         NeoForge.EVENT_BUS.addListener(this::onAttackEntity);
         NeoForge.EVENT_BUS.addListener(this::onLeftClickEmpty);
         NeoForge.EVENT_BUS.addListener(this::onUseItemFinish);
@@ -638,41 +421,12 @@ public final class WseeMod {
         NeoForge.EVENT_BUS.addListener(this::onFishingHookJoin);
         NeoForge.EVENT_BUS.addListener(this::onEntityLeave);
         NeoForge.EVENT_BUS.addListener(this::onProjectileImpact);
-        NeoForge.EVENT_BUS.addListener(this::onBlockDrops);
+        NeoForge.EVENT_BUS.addListener(RefiningHandler::onBlockDrops);
         NeoForge.EVENT_BUS.addListener(this::onIncomingDamage);
         NeoForge.EVENT_BUS.addListener(this::onLivingDamagePost);
         NeoForge.EVENT_BUS.addListener(this::onEntityTick);
         NeoForge.EVENT_BUS.addListener(this::onEntityTickPost);
         NeoForge.EVENT_BUS.addListener(this::onLivingFall);
-    }
-
-    private void registerPayloads(RegisterPayloadHandlersEvent event) {
-        var registrar = event.registrar("1");
-        registrar.playToServer(ShieldBashPayload.TYPE, ShieldBashPayload.STREAM_CODEC,
-                (payload, context) -> context.enqueueWork(() -> {
-                    if (context.player() instanceof ServerPlayer player) {
-                        shieldBash(player);
-                    }
-                }));
-        registrar.playToServer(SwordAuraPayload.TYPE, SwordAuraPayload.STREAM_CODEC,
-                (payload, context) -> context.enqueueWork(() -> {
-                    if (context.player() instanceof ServerPlayer player) {
-                        triggerSwordAura(player);
-                    }
-                }));
-        registrar.playToServer(DoubleJumpPayload.TYPE, DoubleJumpPayload.STREAM_CODEC,
-                (payload, context) -> context.enqueueWork(() -> {
-                    if (context.player() instanceof ServerPlayer player) {
-                        tryDoubleJump(player, payload.sprinting(), payload.xVelocity(), payload.zVelocity());
-                    }
-                }));
-        registrar.playToClient(TrackingTargetPayload.TYPE, TrackingTargetPayload.STREAM_CODEC,
-                (payload, context) -> context.enqueueWork(() -> ClientHooks.handleTrackingTarget(payload)));
-        registrar.playToClient(FlyingHookAnchorPayload.TYPE, FlyingHookAnchorPayload.STREAM_CODEC,
-                (payload, context) -> context.enqueueWork(() ->
-                        handleFlyingHookAnchor(payload, context.player())));
-        registrar.playToClient(DoubleJumpVelocityPayload.TYPE, DoubleJumpVelocityPayload.STREAM_CODEC,
-                (payload, context) -> context.enqueueWork(() -> ClientHooks.handleDoubleJumpVelocity(payload)));
     }
 
     private void onAttackEntity(AttackEntityEvent event) {
@@ -721,100 +475,6 @@ public final class WseeMod {
         int stage = Math.min(2, Math.max(0, state.stage));
         pendingComboAttacks.put(id, new PendingComboAttack(target.getUUID(), attacker.level().getGameTime(),
                 weapon, level, stage));
-    }
-
-    /**
-     * Creative players can normally bypass vanilla anvil applicability checks.
-     * OATZ enchantments remain exclusive to their declared weapon or armor type.
-     */
-    private void onAnvilUpdate(AnvilUpdateEvent event) {
-        ItemStack output = event.getOutput();
-        if (output.isEmpty() || output.is(Items.ENCHANTED_BOOK)) {
-            return;
-        }
-        var enchantments = event.getPlayer().level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
-        for (Identifier id : OATZ_ENCHANTMENT_IDS) {
-            Holder<Enchantment> holder = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT, id));
-            if (EnchantmentHelper.getEnchantmentsForCrafting(output).getLevel(holder) > 0
-                    && !isValidEnchantmentItem(output, id)) {
-                event.setOutput(ItemStack.EMPTY);
-                event.setXpCost(0);
-                event.setMaterialCost(0);
-                event.setCanceled(true);
-                return;
-            }
-        }
-    }
-
-    /**
-     * Enchanting-table results are validated after vanilla applies them. This
-     * is a final server-side backstop for custom providers and creative paths.
-     */
-    private void onPlayerEnchantItem(PlayerEnchantItemEvent event) {
-        ItemStack item = event.getEnchantedItem();
-        if (item.isEmpty() || item.is(Items.ENCHANTED_BOOK)) {
-            return;
-        }
-        var enchantments = event.getEntity().level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT);
-        EnchantmentHelper.updateEnchantments(item, mutable -> {
-            for (Identifier id : OATZ_ENCHANTMENT_IDS) {
-                Holder<Enchantment> holder = enchantments.getOrThrow(ResourceKey.create(Registries.ENCHANTMENT, id));
-                if (mutable.getLevel(holder) > 0 && !isValidEnchantmentItem(item, id)) {
-                    mutable.set(holder, 0);
-                }
-            }
-        });
-    }
-
-    /**
-     * Converts ore drops through the active server smelting recipe after loot
-     * (including Fortune) is resolved.  Looking up the recipe instead of
-     * hard-coding raw iron/gold/copper also supports ores supplied by other
-     * mods, including recipes that use a custom raw material or output stack.
-     */
-    private void onBlockDrops(BlockDropsEvent event) {
-        if (!(event.getBreaker() instanceof Player player)
-                || !event.getState().is(REFINABLE_ORES)
-                || enchantmentLevel(player, event.getTool(), REFINING_ID) <= 0) {
-            return;
-        }
-        Holder<Enchantment> silkTouch = event.getLevel().registryAccess().lookupOrThrow(Registries.ENCHANTMENT)
-                .getOrThrow(Enchantments.SILK_TOUCH);
-        if (EnchantmentHelper.getItemEnchantmentLevel(silkTouch, event.getTool()) > 0) {
-            return;
-        }
-        boolean converted = false;
-        for (ItemEntity drop : event.getDrops()) {
-            ItemStack input = drop.getItem();
-            if (input.isEmpty()) {
-                continue;
-            }
-            Optional<RecipeHolder<SmeltingRecipe>> recipe = event.getLevel().recipeAccess().getRecipeFor(
-                    RecipeType.SMELTING,
-                    new SingleRecipeInput(input),
-                    event.getLevel());
-            if (recipe.isEmpty()) {
-                continue;
-            }
-            ItemStack result = recipe.get().value().assemble(new SingleRecipeInput(input));
-            if (result.isEmpty()) {
-                continue;
-            }
-            // The recipe describes one input item. Multiply only after the
-            // block loot table has applied Fortune so its quantity is kept.
-            int outputCount = Math.max(1, result.getCount()) * input.getCount();
-            drop.setItem(result.copyWithCount(outputCount));
-            converted = true;
-        }
-        if (converted) {
-            ServerLevel level = event.getLevel();
-            BlockPos pos = event.getPos();
-            level.sendParticles(ParticleTypes.FLAME, pos.getX() + 0.5D, pos.getY() + 0.65D, pos.getZ() + 0.5D,
-                    4, 0.2D, 0.2D, 0.2D, 0.015D);
-            level.sendParticles(ParticleTypes.SMOKE, pos.getX() + 0.5D, pos.getY() + 0.7D, pos.getZ() + 0.5D,
-                    2, 0.15D, 0.15D, 0.15D, 0.01D);
-            level.playSound(null, pos, SoundEvents.FURNACE_FIRE_CRACKLE, SoundSource.BLOCKS, 0.35F, 1.2F);
-        }
     }
 
     private void tickFlyingHook(Player player) {
@@ -890,26 +550,6 @@ public final class WseeMod {
             level.sendParticles(ParticleTypes.CLOUD, player.getX(), player.getY() + 0.5D, player.getZ(),
                     1 + state.level / 2, 0.12D, 0.12D, 0.12D, 0.01D);
         }
-    }
-
-    private static double flyingHookPullSpeed(int level) {
-        return switch (level) {
-            case 1 -> 0.55D;
-            case 2 -> 0.65D;
-            case 3 -> 0.75D;
-            case 4 -> 0.85D;
-            default -> 0.95D;
-        };
-    }
-
-    private static int flyingHookMaxDistance(int level) {
-        return switch (level) {
-            case 1 -> 24;
-            case 2 -> 30;
-            case 3 -> 36;
-            case 4 -> 42;
-            default -> 48;
-        };
     }
 
     private static Vec3 resolveFishingAnchor(FishingHook hook, FlyingHookState state) {
@@ -1133,12 +773,7 @@ public final class WseeMod {
             clearOverchargeState(player);
             return;
         }
-        int maxExtraTicks = switch (level) {
-            case 1 -> 10;
-            case 2 -> 15;
-            default -> 20;
-        };
-        double ratio = Mth.clamp((heldTicks - 20.0D) / maxExtraTicks, 0.0D, 1.0D);
+        double ratio = overchargeProgress(level, heldTicks);
         Vec3 center = player.position().add(player.getLookAngle().scale(0.45D)).add(0.0D, player.getBbHeight() * 0.62D, 0.0D);
         if (overchargeStarted.add(id)) {
             serverLevel.sendParticles(ParticleTypes.ENCHANT, center.x, center.y, center.z,
@@ -1155,11 +790,7 @@ public final class WseeMod {
         overchargeStages.put(id, stage);
         if (heldTicks % 5 == 0) {
             int displayStage = Math.min(4, (int) Math.floor(ratio * 4.0D) + 1);
-            int velocityPercent = (int) Math.round((switch (level) {
-                case 1 -> 0.05D;
-                case 2 -> 0.08D;
-                default -> 0.12D;
-            }) * ratio * 100.0D);
+            int velocityPercent = (int) Math.round(overchargeVelocityBonus(level) * ratio * 100.0D);
             overchargeOverlayShown.add(id);
             player.sendOverlayMessage(overchargeChargeOverlay(displayStage, velocityPercent));
         }
@@ -1407,22 +1038,9 @@ public final class WseeMod {
             return;
         }
         int heldTicks = Math.max(0, useDuration - event.getDuration());
-        int maxExtraTicks = switch (level) {
-            case 1 -> 10;
-            case 2 -> 15;
-            default -> 20;
-        };
-        double ratio = Mth.clamp((heldTicks - 20.0D) / maxExtraTicks, 0.0D, 1.0D);
-        double maxDamageBonus = switch (level) {
-            case 1 -> 0.07D;
-            case 2 -> 0.17D;
-            default -> 0.27D;
-        };
-        double maxVelocityBonus = switch (level) {
-            case 1 -> 0.05D;
-            case 2 -> 0.08D;
-            default -> 0.12D;
-        };
+        double ratio = overchargeProgress(level, heldTicks);
+        double maxDamageBonus = overchargeDamageBonus(level);
+        double maxVelocityBonus = overchargeVelocityBonus(level);
         overchargeCharges.put(player.getUUID(), new OverchargeCharge(
                 1.0D + maxDamageBonus * ratio,
                 1.0D + maxVelocityBonus * ratio));
@@ -2111,30 +1729,6 @@ public final class WseeMod {
         return centerY + 6.0D + owner.getRandom().nextDouble() * 2.0D;
     }
 
-    private static int arrowRainCount(int level) {
-        return switch (level) {
-            case 1 -> 6;
-            case 2 -> 9;
-            default -> 12;
-        };
-    }
-
-    private static int arrowRainDuration(int level) {
-        return switch (level) {
-            case 1 -> 30;
-            case 2 -> 36;
-            default -> 40;
-        };
-    }
-
-    private static double arrowRainRadius(int level) {
-        return switch (level) {
-            case 1 -> 2.25D;
-            case 2 -> 2.75D;
-            default -> 3.25D;
-        };
-    }
-
     private void armExplosiveArrow(AbstractArrow arrow, ProjectileImpactEvent event, ServerLevel level) {
         ExplosiveArrowState state = explosiveArrows.get(arrow.getUUID());
         if (state == null || state.armed) {
@@ -2780,14 +2374,6 @@ public final class WseeMod {
         return hit.getType() == HitResult.Type.MISS || hit.getLocation().distanceToSqr(to) < 0.01D;
     }
 
-    private static double shockRingDamageMultiplier(int level) {
-        return switch (level) {
-            case 1 -> 0.12D;
-            case 2 -> 0.16D;
-            default -> 0.20D;
-        };
-    }
-
     private static void applyShockRingKnockback(LivingEntity target, ShockRingInstance ring,
             double dx, double dz, double effectScale) {
         double horizontalLength = Math.sqrt(dx * dx + dz * dz);
@@ -3022,24 +2608,6 @@ public final class WseeMod {
         }
     }
 
-    private static double comboDamageMultiplier(int level, int stage) {
-        if (stage <= 0) {
-            return 1.0D;
-        }
-        if (stage == 1) {
-            return switch (level) {
-                case 1 -> 1.05D;
-                case 2 -> 1.08D;
-                default -> 1.10D;
-            };
-        }
-        return switch (level) {
-            case 1 -> 1.12D;
-            case 2 -> 1.18D;
-            default -> 1.25D;
-        };
-    }
-
     private void recordComboStrikeHit(LivingDamageEvent.Post event) {
         if (!(event.getSource().getDirectEntity() instanceof Player attacker)
                 || event.getEntity() == attacker) {
@@ -3122,22 +2690,6 @@ public final class WseeMod {
             target.setDeltaMovement(boosted.x, motion.y, boosted.z);
             target.syncVelocity = true;
         }
-    }
-
-    private static int battleMomentumMaxStacks(int level) {
-        return switch (level) {
-            case 1 -> 3;
-            case 2 -> 4;
-            default -> 5;
-        };
-    }
-
-    private static double battleMomentumPerStack(int level) {
-        return switch (level) {
-            case 1 -> 0.04D;
-            case 2 -> 0.05D;
-            default -> 0.06D;
-        };
     }
 
     private void tickForcedMarch(Player player) {
@@ -3240,37 +2792,9 @@ public final class WseeMod {
         }
     }
 
-    private static double foundationKnockbackBonus(int level) {
-        return switch (level) {
-            case 1 -> 0.15D;
-            case 2 -> 0.25D;
-            default -> 0.35D;
-        };
-    }
-
     private void clearForcedMarch(Player player) {
         forcedMarchStates.remove(player.getUUID());
         removeForcedMarchModifier(player);
-    }
-
-    private static int forcedMarchRequiredTicks(int level) {
-        return switch (level) {
-            case 1 -> 80;
-            case 2 -> 70;
-            case 3 -> 60;
-            case 4 -> 50;
-            default -> 40;
-        };
-    }
-
-    private static double forcedMarchSpeedBonus(int level) {
-        return switch (level) {
-            case 1 -> 0.06D;
-            case 2 -> 0.09D;
-            case 3 -> 0.12D;
-            case 4 -> 0.15D;
-            default -> 0.18D;
-        };
     }
 
     private void onEntityTick(EntityTickEvent.Pre event) {
@@ -3614,14 +3138,6 @@ public final class WseeMod {
         return weapon == null ? ItemStack.EMPTY : weapon;
     }
 
-    private static float surgeDamageMultiplier(int level) {
-        return switch (level) {
-            case 1 -> 1.15F;
-            case 2 -> 1.25F;
-            default -> 1.35F;
-        };
-    }
-
     private static void applyTether(LivingEntity target, LivingEntity shooter, ServerLevel level, int levelValue) {
         Vec3 offset = shooter.getPosition(1.0F).subtract(target.getPosition(1.0F));
         Vec3 horizontal = new Vec3(offset.x, 0.0D, offset.z);
@@ -3715,110 +3231,6 @@ public final class WseeMod {
                 2, 0.25D, 0.4D, 0.25D, 0.01D);
     }
 
-    private static int enchantmentLevel(LivingEntity entity, ItemStack stack, Identifier id) {
-        if (!isValidEnchantmentItem(stack, id)) {
-            return 0;
-        }
-        Holder<Enchantment> enchantment = entity.level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT)
-                .getOrThrow(ResourceKey.create(Registries.ENCHANTMENT, id));
-        return EnchantmentHelper.getItemEnchantmentLevel(enchantment, stack);
-    }
-
-    /** Runtime backstop for the data-driven primary/supported item restrictions. */
-    private static boolean isValidEnchantmentItem(ItemStack stack, Identifier id) {
-        if (stack.isEmpty()) {
-            return false;
-        }
-        if (id.equals(ENCHANTMENT_ID)) {
-            return stack.is(Items.SHIELD);
-        }
-        if (id.equals(DEFLECT_ID)) {
-            return stack.is(Items.SHIELD);
-        }
-        if (id.equals(EXPANSION_ID) || id.equals(EXPLOSIVE_ARROW_ID) || id.equals(TRACKING_ID)) {
-            return isRangedWeapon(stack);
-        }
-        if (id.equals(CLUSTER_ID) || id.equals(ARMOR_PIERCING_ID)) {
-            return stack.getItem() instanceof CrossbowItem;
-        }
-        if (id.equals(BLEEDING_ID)) {
-            return stack.is(ItemTags.SPEARS);
-        }
-        if (id.equals(FROSTBITE_ID)) {
-            return stack.is(ItemTags.SWORDS) || stack.is(ItemTags.SPEARS);
-        }
-        if (id.equals(LONG_EDGE_ID)) {
-            return stack.is(ItemTags.SPEARS);
-        }
-        if (id.equals(SURGE_ID)) {
-            return stack.is(Items.TRIDENT);
-        }
-        if (id.equals(TETHER_ID) || id.equals(REBOUND_ID) || id.equals(HYDROSHOCK_ID)) {
-            return stack.is(Items.TRIDENT);
-        }
-        if (id.equals(OVERCHARGE_ID)) {
-            return stack.getItem() instanceof BowItem;
-        }
-        if (id.equals(COMBO_STRIKE_ID)) {
-            return stack.is(ItemTags.SWORDS);
-        }
-        if (id.equals(ARROW_RAIN_ID)) {
-            return stack.getItem() instanceof BowItem;
-        }
-        if (id.equals(BATTLE_MOMENTUM_ID)) {
-            return isBattleMomentumWeapon(stack);
-        }
-        if (id.equals(FORCED_MARCH_ID)) {
-            return isFootEquipment(stack);
-        }
-        if (id.equals(CLARITY_ID)) {
-            return stack.is(ItemTags.HEAD_ARMOR);
-        }
-        if (id.equals(EXECUTION_ID)) {
-            return stack.is(ItemTags.AXES);
-        }
-        if (id.equals(FALLING_STAR_ID)) {
-            return stack.getItem() instanceof MaceItem;
-        }
-        if (id.equals(SHOCK_RING_ID)) {
-            return stack.getItem() instanceof MaceItem;
-        }
-        if (id.equals(REFINING_ID)) {
-            return stack.is(ItemTags.PICKAXES);
-        }
-        if (id.equals(FOUNDATION_ID)) {
-            return stack.is(ItemTags.LEG_ARMOR);
-        }
-        if (id.equals(AIR_FORCE_ID)) {
-            return stack.is(Items.FISHING_ROD);
-        }
-        if (id.equals(FLYING_HOOK_ID)) {
-            return stack.is(Items.FISHING_ROD);
-        }
-        if (id.equals(DOUBLE_JUMP_ID)) {
-            return isFootEquipment(stack);
-        }
-        if (id.equals(SHIELD_ID) || id.equals(HOLY_LIGHT_ID)) {
-            return isChestEquipment(stack);
-        }
-        if (id.equals(SWORD_AURA_ID)) {
-            return stack.is(ItemTags.SWORDS);
-        }
-        return false;
-    }
-
-    private static boolean isRangedWeapon(ItemStack stack) {
-        return stack.getItem() instanceof BowItem || stack.getItem() instanceof CrossbowItem;
-    }
-
-    private static boolean isBattleMomentumWeapon(ItemStack stack) {
-        return stack.is(ItemTags.MELEE_WEAPON_ENCHANTABLE)
-                || stack.is(ItemTags.SPEARS)
-                || stack.is(ItemTags.AXES)
-                || stack.is(Items.TRIDENT)
-                || stack.is(Items.MACE);
-    }
-
     private void tickClarity(Player player) {
         UUID id = player.getUUID();
         int level = enchantmentLevel(player, player.getItemBySlot(EquipmentSlot.HEAD), CLARITY_ID);
@@ -3830,22 +3242,6 @@ public final class WseeMod {
         player.removeEffect(MobEffects.DARKNESS);
         player.removeEffect(MobEffects.BLINDNESS);
         player.removeEffect(MobEffects.NAUSEA);
-    }
-
-    private static boolean isChestEquipment(ItemStack stack) {
-        if (stack.is(ItemTags.CHEST_ARMOR)) {
-            return true;
-        }
-        Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
-        return equippable != null && equippable.slot() == EquipmentSlot.CHEST;
-    }
-
-    private static boolean isFootEquipment(ItemStack stack) {
-        if (stack.is(ItemTags.FOOT_ARMOR)) {
-            return true;
-        }
-        Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
-        return equippable != null && equippable.slot() == EquipmentSlot.FEET;
     }
 
     private void tickSlowModifier(Level level) {
@@ -4052,16 +3448,6 @@ public final class WseeMod {
 
     private static float percentMaxHealthDamageForPercent(double maxHealth, double percent) {
         return (float) Math.min(maxHealth * Math.min(percent, 0.08D), Float.MAX_VALUE);
-    }
-
-    private static double swordAuraDamageMultiplier(int level) {
-        return switch (level) {
-            case 1 -> 0.40D;
-            case 2 -> 0.55D;
-            case 3 -> 0.70D;
-            case 4 -> 0.85D;
-            default -> 1.00D;
-        };
     }
 
     private void tickSwordWave(Player player) {

@@ -41,3 +41,22 @@ tasks.withType(JavaCompile).configureEach {
 tasks.withType(Jar).configureEach {
     archiveFileName = "WSEE-${project.version}-NeoForge.jar"
 }
+
+tasks.register('regressionTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks loader-independent enchantment values without starting Minecraft.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'cn.wusheng.oatz.enchantment.EnchantmentValuesRegression'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+tasks.named('test') {
+    exclude '**/EnchantmentValuesRegression.class'
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('regressionTest')
+}
