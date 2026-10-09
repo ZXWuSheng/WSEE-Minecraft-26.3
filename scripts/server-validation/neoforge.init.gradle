@@ -1,0 +1,61 @@
+// Isolated QA source set: it is never included in the distributable WSEE JAR.
+allprojects { project ->
+    project.plugins.withId('net.neoforged.moddev') {
+        def qa = project.sourceSets.create('movementQa')
+        qa.java.srcDirs = [project.file('scripts/server-validation/common'), project.file('scripts/server-validation/neoforge')]
+        qa.resources.srcDirs = [project.file('scripts/server-validation/neoforge-resources')]
+        qa.compileClasspath += project.sourceSets.main.output + project.sourceSets.main.compileClasspath
+        qa.runtimeClasspath += project.sourceSets.main.output + project.sourceSets.main.runtimeClasspath
+        project.configurations.movementQaImplementation.extendsFrom(project.configurations.implementation)
+        project.neoForge.mods.create('wsee_server_validation') { sourceSet qa }
+        project.neoForge.runs.create('movementValidation') {
+            server()
+            gameDirectory = project.file('build/qa-neoforge')
+            programArgument '--nogui'
+            jvmArgument '-Xmx1500m'
+        }
+        def prepare = project.tasks.register('prepareMovementQa') {
+            doLast {
+                def directory = project.file('build/qa-neoforge')
+                directory.mkdirs()
+                new File(directory, 'movement-qa-result.txt').delete()
+                def accepted = new File('E:/无声无息/附属工具/.local/tests/judgment/server/eula.txt')
+                if (!accepted.exists() || !accepted.text.contains('eula=true')) {
+                    throw new GradleException('An existing accepted local test EULA is required.')
+                }
+                new File(directory, 'eula.txt').text = accepted.text
+                new File(directory, 'server.properties').text = '''server-ip=127.0.0.1
+server-port=25165
+online-mode=false
+enforce-secure-profile=false
+white-list=false
+enforce-whitelist=false
+level-name=movement-qa-world
+level-type=minecraft:flat
+generator-settings={"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:stone","height":3}],"biome":"minecraft:plains"}
+gamemode=survival
+difficulty=peaceful
+spawn-protection=0
+view-distance=4
+simulation-distance=4
+max-players=4
+enable-status=false
+allow-flight=true
+max-tick-time=180000
+'''
+                def properties = new File(directory, 'server.properties')
+                properties.text = properties.text.replace('level-name=movement-qa-world',
+                        "level-name=movement-qa-world-${System.currentTimeMillis()}")
+            }
+        }
+        project.tasks.matching { it.name == 'runMovementValidation' }.configureEach {
+            dependsOn prepare
+            doLast {
+                def result = project.file('build/qa-neoforge/movement-qa-result.txt')
+                if (!result.exists() || !result.text.readLines().contains('failures=0')) {
+                    throw new GradleException('Runtime movement QA failed; inspect build/qa-neoforge/movement-qa-result.txt and trace.')
+                }
+            }
+        }
+    }
+}

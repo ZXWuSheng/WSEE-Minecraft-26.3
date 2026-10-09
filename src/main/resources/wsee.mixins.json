@@ -3,7 +3,14 @@
   "minVersion": "0.8",
   "package": "cn.wusheng.oatz.mixin",
   "mixins": [
-    "FishingHookMixin"
+    "FishingHookMixin",
+    "FlyingHookStateMixin",
+    "FishingRodUseMixin"
+  ],
+  "client": [
+    "FlyingHookInputMixin",
+    "FlyingHookUseKeyMixin",
+    "FishingHookRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

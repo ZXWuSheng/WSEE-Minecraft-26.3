@@ -35,23 +35,11 @@ public final class EnchantmentValues {
     }
 
     public static double flyingHookPullSpeed(int level) {
-        return switch (level) {
-            case 1 -> 0.55D;
-            case 2 -> 0.65D;
-            case 3 -> 0.75D;
-            case 4 -> 0.85D;
-            default -> 0.95D;
-        };
+        return cn.wusheng.oatz.movement.MovementMath.MAX_RADIAL_SPEED;
     }
 
     public static int flyingHookMaxDistance(int level) {
-        return switch (level) {
-            case 1 -> 24;
-            case 2 -> 30;
-            case 3 -> 36;
-            case 4 -> 42;
-            default -> 48;
-        };
+        return (int) cn.wusheng.oatz.movement.MovementMath.MAX_DISTANCE;
     }
 
     public static int arrowRainCount(int level) {
@@ -237,15 +225,15 @@ public final class EnchantmentValues {
     }
 
     public static double flyingHookProjectileSpeedMultiplier(int level) {
-        return 1.0D + level * 0.15D;
+        return cn.wusheng.oatz.movement.MovementMath.PROJECTILE_SPEED_MULTIPLIER;
     }
 
     public static int flyingHookTimeoutTicks() {
-        return 60;
+        return cn.wusheng.oatz.movement.MovementMath.REEL_TIMEOUT;
     }
 
-    public static double doubleJumpVerticalVelocity() {
-        return 0.65D;
+    public static double doubleJumpVerticalImpulse() {
+        return cn.wusheng.oatz.movement.DoubleJumpController.VERTICAL_IMPULSE;
     }
 
     public static float doubleJumpSafeFallBonus() {

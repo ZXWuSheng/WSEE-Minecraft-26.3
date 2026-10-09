@@ -24,8 +24,14 @@ public final class ClientHooks {
     private static boolean jumpKeyWasDown;
     private static boolean doubleJumpWasOnGround;
     private static final java.util.Map<Integer, Boolean> TRACKING_INDICATORS = new java.util.HashMap<>();
+    private static final cn.wusheng.oatz.movement.MovementImpulseState MOVEMENT_IMPULSES =
+            new cn.wusheng.oatz.movement.MovementImpulseState();
 
     private ClientHooks() {
+    }
+
+    public static void handleMovementImpulse(MovementImpulsePayload payload) {
+        MOVEMENT_IMPULSES.apply(Minecraft.getInstance().player, payload);
     }
 
     public static void handleTrackingTarget(TrackingTargetPayload payload) {
@@ -69,6 +75,8 @@ public final class ClientHooks {
     public static void pollDoubleJump(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || minecraft.player == null) {
+            WseeMod.clearFlyingHookClientState();
+            MOVEMENT_IMPULSES.clear();
             jumpKeyWasDown = false;
             doubleJumpWasOnGround = false;
             return;
@@ -160,20 +168,6 @@ public final class ClientHooks {
         }
     }
 
-    /** Apply the validated air-jump immediately to the locally predicted player. */
-    public static void handleDoubleJumpVelocity(DoubleJumpVelocityPayload payload) {
-        Minecraft minecraft = Minecraft.getInstance();
-        LocalPlayer player = minecraft.player;
-        if (player == null) {
-            return;
-        }
-        player.setDeltaMovement(payload.xVelocity(), payload.yVelocity(), payload.zVelocity());
-        if (payload.sprinting()) {
-            player.setSprinting(true);
-        }
-        player.fallDistance = 0.0F;
-    }
-
     /**
      * Enchantment Descriptions supplies each WSEE description as one component. Split the
      * deliberate sentence separators into real tooltip rows without embedding a newline,
@@ -200,22 +194,27 @@ public final class ClientHooks {
     @SubscribeEvent
     public static void onJumpKey(InputEvent.Key event) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (event.getAction() != InputConstants.PRESS
-                || event.getKey() != minecraft.options.keyJump.getKey().getValue()) {
+        if (event.getKey() != minecraft.options.keyJump.getKey().getValue()) {
             return;
         }
+        if (event.getAction() == InputConstants.RELEASE) {
+            jumpKeyWasDown = false;
+            return;
+        }
+        if (event.getAction() != InputConstants.PRESS || jumpKeyWasDown) {
+            return;
+        }
+        jumpKeyWasDown = true;
         if (minecraft.gui.screen() != null || minecraft.gui.overlay() != null || minecraft.player == null
                 || !WseeMod.hasDoubleJump(minecraft.player)) {
             return;
         }
-        jumpKeyWasDown = true;
         if (!minecraft.player.onGround()) {
             sendDoubleJumpPayload(minecraft.player);
         }
     }
 
     private static void sendDoubleJumpPayload(LocalPlayer player) {
-        var motion = player.getDeltaMovement();
-        ClientPacketDistributor.sendToServer(new DoubleJumpPayload(motion.x, motion.z, player.isSprinting()));
+        ClientPacketDistributor.sendToServer(new DoubleJumpPayload());
     }
 }

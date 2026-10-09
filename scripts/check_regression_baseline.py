@@ -30,7 +30,7 @@ EXPECTED = {
     "expansion": (3, "#wsee:enchantable/bow_crossbow"),
     "explosive_arrow": (3, "#wsee:enchantable/bow_crossbow"),
     "falling_star": (3, "#minecraft:enchantable/mace"),
-    "flying_hook": (5, "#wsee:enchantable/flying_hook"),
+    "flying_hook": (1, "#wsee:enchantable/flying_hook"),
     "forced_march": (5, "#minecraft:enchantable/foot_armor"),
     "foundation": (3, "#wsee:enchantable/foundation"),
     "frostbite": (3, "#wsee:enchantable/frostbite"),
@@ -205,12 +205,32 @@ class RegressionBaseline(unittest.TestCase):
         main = (ROOT / "src/main/java/cn/wusheng/oatz/WseeMod.java").read_text(encoding="utf-8")
         network = (ROOT / "src/main/java/cn/wusheng/oatz/registry/ModNetworking.java").read_text(encoding="utf-8")
         self.assertIn("modBus.addListener((RegisterPayloadHandlersEvent event) -> ModNetworking.register(", main)
-        self.assertIn('event.registrar("1")', network)
-        self.assertEqual(["ShieldBashPayload", "SwordAuraPayload", "DoubleJumpPayload"],
+        self.assertIn('event.registrar("4")', network)
+        self.assertEqual(["ShieldBashPayload", "SwordAuraPayload", "DoubleJumpPayload", "FlyingHookUsePayload"],
                          re.findall(r"registrar\.playToServer\((\w+)\.TYPE", network))
-        self.assertEqual(["TrackingTargetPayload", "FlyingHookAnchorPayload", "DoubleJumpVelocityPayload"],
+        self.assertEqual(["TrackingTargetPayload", "MovementImpulsePayload", "FlyingHookAnchorPayload"],
                          re.findall(r"registrar\.playToClient\((\w+)\.TYPE", network))
-        self.assertEqual(6, network.count("context.enqueueWork("))
+        self.assertEqual(7, network.count("context.enqueueWork("))
+
+    def test_movement_uses_authorized_increments(self):
+        package = ROOT / "src/main/java/cn/wusheng/oatz"
+        main = (package / "WseeMod.java").read_text(encoding="utf-8")
+        motion = (package / "movement/ServerMotion.java").read_text(encoding="utf-8")
+        receipt = (package / "movement/MovementImpulseState.java").read_text(encoding="utf-8")
+        self.assertIn("ServerMotion.applyImpulse(player,", main)
+        self.assertIn("new Vec3(0.0D, DoubleJumpController.VERTICAL_IMPULSE, 0.0D)", main)
+        self.assertIn("player.getDeltaMovement().add(delta)", motion)
+        self.assertIn("player.getKnownMovement()", motion)
+        self.assertIn("new MovementImpulsePayload", motion)
+        self.assertNotIn("ClientboundSetEntityMotionPacket", motion)
+        self.assertNotRegex(motion, r"\.syncVelocity\s*=")
+        self.assertIn("current.add(approvedDelta(current, payload))", receipt)
+        self.assertIn("payload.radialLimit() - current.dot(axis)", receipt)
+        self.assertIn("delta.scale(Math.min(1.0D, allowed / length))", receipt)
+        self.assertIn("applyImpulse(player, delta, -1.0D)", motion)
+        self.assertIn("packetSequence <= sequence", receipt)
+        self.assertIn("retired.contains(packetSession)", receipt)
+        self.assertNotIn("consumeRequest", receipt)
 
     def test_refining_uses_ore_tags_and_smelting_recipes(self):
         ore_tag = read_json(RESOURCES / "data/wsee/tags/block/refinable_ores.json")
@@ -242,7 +262,7 @@ class RegressionBaseline(unittest.TestCase):
                          {row[2]: roman[row[4]] for row in rows[1:]})
 
     def test_readme_and_repository_rules_count(self):
-        self.assertIn("31 custom enchantments", (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("31 项自定义附魔", (ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertIn("31-enchantment inventory", (ROOT / "AGENTS.md").read_text(encoding="utf-8"))
 
 

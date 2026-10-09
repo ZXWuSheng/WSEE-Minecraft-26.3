@@ -1,9 +1,10 @@
 package cn.wusheng.oatz;
 
+import cn.wusheng.oatz.movement.DoubleJumpController;
+
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
@@ -95,6 +96,8 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.function.Supplier;
+import cn.wusheng.oatz.movement.FlyingHookController;
+import cn.wusheng.oatz.movement.FlyingHookClientState;
 import cn.wusheng.oatz.registry.ModRegistries;
 import cn.wusheng.oatz.registry.ModNetworking;
 import cn.wusheng.oatz.projectile.TrackingHandler;
@@ -173,38 +176,14 @@ public final class WseeMod {
     private final ArrowRainHandler arrowRainHandler = new ArrowRainHandler();
     private final TrackingHandler trackingHandler = new TrackingHandler();
     private final Map<ResourceKey<Level>, Long> explosiveStateTicks = new HashMap<>();
-    private final Map<UUID, FlyingHookState> flyingHooks = new HashMap<>();
-    private final Map<UUID, ClientFlyingHookAnchor> clientFlyingHookAnchors = new HashMap<>();
-    private final Map<UUID, Boolean> doubleJumpAvailable = new HashMap<>();
-    private final Map<UUID, Boolean> doubleJumpKeyDown = new HashMap<>();
-    private final Map<UUID, Integer> doubleJumpAirTicks = new HashMap<>();
-    private final Map<UUID, Vec3> doubleJumpInitialHorizontalVelocity = new HashMap<>();
+    private static final FlyingHookController FLYING_HOOKS =
+            new FlyingHookController(WseeMod::hasFlyingHook, WseeMod::sendFlyingHookAnchor);
+    private static final FlyingHookClientState CLIENT_HOOKS = new FlyingHookClientState();
+    private static final Map<UUID, InteractionHand> PENDING_HOOK_CASTS = new HashMap<>();
+    private final DoubleJumpController doubleJumpController = new DoubleJumpController();
     private final Map<UUID, FallingStarHit> fallingStarHits = new HashMap<>();
     private final Map<UUID, ShockRingHit> shockRingHits = new HashMap<>();
     private final List<ShockRingInstance> shockRings = new ArrayList<>();
-    private static final class FlyingHookState {
-        private final UUID hook;
-        private final int level;
-        private final ResourceKey<Level> dimension;
-        private final InteractionHand hand;
-        private Vec3 anchor;
-        private Entity anchorEntity;
-        private Vec3 entityAnchorOffset;
-        private BlockPos anchorBlock;
-        private int durabilityCost;
-        private int ticks;
-        private int stuckTicks;
-        private double lastDistance = Double.NaN;
-        private boolean pulling;
-
-        private FlyingHookState(UUID hook, int level, ResourceKey<Level> dimension, InteractionHand hand) {
-            this.hook = hook;
-            this.level = level;
-            this.dimension = dimension;
-            this.hand = hand;
-        }
-    }
-
     private record OverchargeCharge(double damageMultiplier, double velocityMultiplier) {}
     private record PendingMeleeAttack(UUID target, long tick) {}
     private record PendingComboAttack(UUID target, long tick, ItemStack weapon, int level, int stage) {}
@@ -247,7 +226,6 @@ public final class WseeMod {
         }
     }
 
-    private record ClientFlyingHookAnchor(Vec3 anchor, Entity entity, Vec3 entityOffset, BlockPos block) {}
     private static final class ComboState {
         private UUID target;
         private ItemStack weapon;
@@ -320,10 +298,18 @@ public final class WseeMod {
     private record HolyField(Vec3 center, long expiresAt, long nextHealAt, int level) {}
     public WseeMod(IEventBus modBus) {
         ModRegistries.register(modBus);
+        cn.wusheng.oatz.registry.MovementAttachments.register(modBus);
         modBus.addListener((RegisterPayloadHandlersEvent event) -> ModNetworking.register(event, this::shieldBash,
-                this::triggerSwordAura, this::tryDoubleJump, this::handleFlyingHookAnchor));
+                this::triggerSwordAura, this::tryDoubleJump, this::handleFlyingHookAnchor, this::useFlyingHook));
         NeoForge.EVENT_BUS.addListener(this::onPlayerTick);
         NeoForge.EVENT_BUS.addListener(this::onPlayerLoggedOut);
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.server.ServerStoppedEvent event) -> {
+            FLYING_HOOKS.clearAll();
+            CLIENT_HOOKS.clearAll();
+            PENDING_HOOK_CASTS.clear();
+            doubleJumpController.clearAll();
+            cn.wusheng.oatz.movement.ServerMotion.clearAll();
+        });
         NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
         NeoForge.EVENT_BUS.addListener(EnchantmentApplicabilityHandler::onAnvilUpdate);
         NeoForge.EVENT_BUS.addListener(EnchantmentApplicabilityHandler::onPlayerEnchantItem);
@@ -339,7 +325,6 @@ public final class WseeMod {
         NeoForge.EVENT_BUS.addListener(this::onIncomingDamage);
         NeoForge.EVENT_BUS.addListener(this::onLivingDamagePost);
         NeoForge.EVENT_BUS.addListener(this::onEntityTick);
-        NeoForge.EVENT_BUS.addListener(this::onEntityTickPost);
         NeoForge.EVENT_BUS.addListener(this::onLivingFall);
     }
 
@@ -388,95 +373,10 @@ public final class WseeMod {
     }
 
     private void tickFlyingHook(Player player) {
-        UUID id = player.getUUID();
-        FlyingHookState state = flyingHooks.get(id);
-        if (state == null) {
-            return;
-        }
-        if (!(player.level() instanceof ServerLevel level)) {
-            flyingHooks.remove(id);
-            return;
-        }
-        if (!state.dimension.equals(level.dimension())) {
-            ServerLevel hookLevel = level.getServer().getLevel(state.dimension);
-            Entity oldHook = hookLevel == null ? null : hookLevel.getEntity(state.hook);
-            if (oldHook instanceof FishingHook hook) {
-                finishFlyingHook(player, state, hook);
-            } else {
-                flyingHooks.remove(id);
-            }
-            return;
-        }
-        Entity hookEntity = level.getEntity(state.hook);
-        if (!(hookEntity instanceof FishingHook hook) || !hook.isAlive()) {
-            flyingHooks.remove(id);
-            return;
-        }
-        if (player.isDeadOrDying() || player.isPassenger() || player.isFallFlying()
-                || player.getAbilities().flying) {
-            finishFlyingHook(player, state, hook);
-            return;
-        }
-        int levelValue = enchantmentLevel(player, player.getMainHandItem(), FLYING_HOOK_ID);
-        if (levelValue <= 0 && enchantmentLevel(player, player.getOffhandItem(), FLYING_HOOK_ID) <= 0) {
-            finishFlyingHook(player, state, hook);
-            return;
-        }
-        Vec3 anchor = state.pulling ? resolveFishingAnchor(hook, state) : hook.position();
-        if (anchor == null) {
-            finishFlyingHook(player, state, hook);
-            return;
-        }
-        double distance = player.position().distanceTo(anchor);
-        int maxDistance = flyingHookMaxDistance(state.level);
-        if (distance >= maxDistance) {
-            finishFlyingHook(player, state, hook);
-            return;
-        }
-        if (!state.pulling) {
-            return;
-        }
-        state.anchor = anchor;
-        if (!Double.isNaN(state.lastDistance) && state.lastDistance - distance < 0.1D) {
-            state.stuckTicks++;
-        } else {
-            state.stuckTicks = 0;
-        }
-        state.lastDistance = distance;
-        if (distance <= 1.5D || ++state.ticks >= flyingHookTimeoutTicks() || state.stuckTicks >= 10) {
-            finishFlyingHook(player, state, hook);
-            return;
-        }
-        Vec3 direction = anchor.subtract(player.position());
-        if (direction.lengthSqr() < 1.0E-6D) {
-            finishFlyingHook(player, state, hook);
-            return;
-        }
-        Vec3 velocity = direction.normalize().scale(flyingHookPullSpeed(state.level));
-        player.setDeltaMovement(velocity);
-        player.syncVelocity = true;
-        player.fallDistance = 0.0F;
-        if (state.ticks % 4 == 0) {
-            level.sendParticles(ParticleTypes.CLOUD, player.getX(), player.getY() + 0.5D, player.getZ(),
-                    1 + state.level / 2, 0.12D, 0.12D, 0.12D, 0.01D);
-        }
+        FLYING_HOOKS.tickPlayer(player);
     }
 
-    private static Vec3 resolveFishingAnchor(FishingHook hook, FlyingHookState state) {
-        if (state.anchorEntity != null) {
-            Entity entity = state.anchorEntity;
-            if (entity.isRemoved() || !entity.canInteractWithLevel() || entity.level() != hook.level()) {
-                return null;
-            }
-            Vec3 offset = state.entityAnchorOffset == null ? Vec3.ZERO : state.entityAnchorOffset;
-            return entity.position().add(offset);
-        }
-        if (state.anchorBlock != null
-                && hook.level().getBlockState(state.anchorBlock).getShape(hook.level(), state.anchorBlock).isEmpty()) {
-            return null;
-        }
-        return state.anchor;
-    }
+
 
     private void onPlayerTick(PlayerTickEvent.Pre event) {
         Player player = event.getEntity();
@@ -540,72 +440,39 @@ public final class WseeMod {
     }
 
     private void tickDoubleJump(Player player) {
-        UUID id = player.getUUID();
-        boolean keyDown = player.isJumping();
-        boolean jumpPressed = keyDown && !doubleJumpKeyDown.getOrDefault(id, false);
-        doubleJumpKeyDown.put(id, keyDown);
-        int level = enchantmentLevel(player, player.getItemBySlot(EquipmentSlot.FEET), DOUBLE_JUMP_ID);
-        if (level <= 0 || player.isDeadOrDying() || player.isSpectator()
-                || player.isSwimming() || player.isPassenger() || player.isFallFlying()
-                || player.getAbilities().flying) {
-            doubleJumpAvailable.remove(id);
-            doubleJumpKeyDown.remove(id);
-            doubleJumpAirTicks.remove(id);
-            doubleJumpInitialHorizontalVelocity.remove(id);
+        if (player.isDeadOrDying() || player.isRemoved()) {
+            doubleJumpController.clearPlayer(player.getUUID());
             return;
         }
-        if (player.onGround()) {
-            doubleJumpAvailable.put(id, true);
-            doubleJumpAirTicks.put(id, 0);
-        } else if (doubleJumpAvailable.containsKey(id)) {
-            // The first airborne tick belongs to the vanilla jump. Wait until
-            // the server has observed that transition before accepting a new
-            // rising edge or a client payload as the second jump.
-            int airTicks = doubleJumpAirTicks.getOrDefault(id, 0);
-            if (airTicks == 0) {
-                Vec3 motion = player.getDeltaMovement();
-                doubleJumpInitialHorizontalVelocity.put(id, new Vec3(motion.x, 0.0D, motion.z));
-            }
-            if (jumpPressed && airTicks > 0 && player instanceof ServerPlayer serverPlayer) {
-                Vec3 motion = serverPlayer.getDeltaMovement();
-                tryDoubleJump(serverPlayer, serverPlayer.isSprinting(), motion.x, motion.z);
-            }
-            doubleJumpAirTicks.put(id, Math.min(airTicks + 1, 20));
+        boolean genuineGroundContact = player.onGround() && !player.isInWater() && !player.isInLava()
+                && !player.onClimbable() && player.level().getBlockCollisions(player,
+                        player.getBoundingBox().move(0.0D, -0.01D, 0.0D)).iterator().hasNext();
+        if (doubleJumpController.tick(player.getUUID(), player, player.level().dimension(),
+                isDoubleJumpEligible(player), genuineGroundContact, player.isJumping())
+                && player instanceof ServerPlayer serverPlayer) {
+            tryDoubleJump(serverPlayer);
         }
     }
 
-    private void tryDoubleJump(ServerPlayer player, boolean requestedSprinting,
-            double requestedX, double requestedZ) {
-        int level = enchantmentLevel(player, player.getItemBySlot(EquipmentSlot.FEET), DOUBLE_JUMP_ID);
-        if (level <= 0 || player.onGround() || player.isSpectator() || player.isSwimming()
-                || player.isPassenger() || player.isFallFlying() || player.getAbilities().flying
-                || !doubleJumpAvailable.getOrDefault(player.getUUID(), false)) {
+    private static boolean isDoubleJumpEligible(Player player) {
+        return enchantmentLevel(player, player.getItemBySlot(EquipmentSlot.FEET), DOUBLE_JUMP_ID) > 0
+                && !player.isDeadOrDying() && !player.isRemoved() && !player.isSpectator()
+                && !player.isSwimming() && !player.isPassenger() && !player.isFallFlying()
+                && !player.getAbilities().flying && !player.isInWater() && !player.isInLava()
+                && !player.onClimbable();
+    }
+
+    private void tryDoubleJump(ServerPlayer player) {
+        if (!doubleJumpController.consumeRequest(player.getUUID(), player, player.level().dimension(),
+                isDoubleJumpEligible(player), player.onGround())) {
             return;
         }
-        Vec3 current = player.getDeltaMovement();
-        Vec3 initial = doubleJumpInitialHorizontalVelocity.get(player.getUUID());
-        double x = initial != null ? initial.x : (Double.isFinite(requestedX) ? requestedX : current.x);
-        double z = initial != null ? initial.z : (Double.isFinite(requestedZ) ? requestedZ : current.z);
-        double requestedSpeed = Math.sqrt(x * x + z * z);
-        double maxSpeed = Math.max(1.0D, Math.sqrt(current.x * current.x + current.z * current.z) * 3.0D + 0.25D);
-        if (requestedSpeed > maxSpeed) {
-            double scale = maxSpeed / requestedSpeed;
-            x *= scale;
-            z *= scale;
-        }
-        // Preserve the sprint state across the server validated air jump. The client
-        // can send the state one tick before the server's movement command arrives.
-        boolean sprinting = requestedSprinting && requestedSpeed > 0.03D && !player.isCrouching()
-                && !player.isUsingItem();
-        if (sprinting) {
-            player.setSprinting(true);
-        }
-        player.setDeltaMovement(x, doubleJumpVerticalVelocity(), z);
-        player.syncVelocity = true;
-        player.connection.send(new ClientboundSetEntityMotionPacket(player));
-        player.connection.send(new DoubleJumpVelocityPayload(x, doubleJumpVerticalVelocity(), z, sprinting));
+        // The server authorizes one increment; the owner adds it to its actual
+        // current inertia when received, instead of accepting stale server X/Z.
+        cn.wusheng.oatz.movement.ServerMotion.applyImpulse(player,
+                new Vec3(0.0D, DoubleJumpController.VERTICAL_IMPULSE, 0.0D));
         player.fallDistance = 0.0F;
-        doubleJumpAvailable.put(player.getUUID(), false);
+        noteFlyingHookDoubleJump(player);
         if (player.level() instanceof ServerLevel levelWorld) {
             levelWorld.sendParticles(ParticleTypes.CLOUD, player.getX(), player.getY(), player.getZ(),
                     6, 0.25D, 0.08D, 0.25D, 0.03D);
@@ -999,47 +866,22 @@ public final class WseeMod {
 
     private void onFishingHookJoin(EntityJoinLevelEvent event) {
         if (event.getLevel().isClientSide() || !(event.getEntity() instanceof FishingHook hook)
-                || !(hook.getOwner() instanceof Player owner) || !(hook.level() instanceof ServerLevel level)) {
-            return;
-        }
-        // Capture the enchantment state on the real hook.  retrieve(ItemStack)
-        // can later receive a reconstructed stack or a different hand's rod;
-        // this marker keeps Air Force authoritative for the entire cast.
+                || !(hook.getOwner() instanceof Player owner)) return;
         boolean airForceActive = enchantmentLevel(owner, owner.getMainHandItem(), AIR_FORCE_ID) > 0
                 || enchantmentLevel(owner, owner.getOffhandItem(), AIR_FORCE_ID) > 0;
         hook.getPersistentData().putBoolean(AirForceFishing.ACTIVE_KEY, airForceActive);
-        InteractionHand hand = InteractionHand.MAIN_HAND;
-        int flyingLevel = enchantmentLevel(owner, owner.getMainHandItem(), FLYING_HOOK_ID);
-        if (flyingLevel <= 0) {
-            hand = InteractionHand.OFF_HAND;
-            flyingLevel = enchantmentLevel(owner, owner.getOffhandItem(), FLYING_HOOK_ID);
-        }
-        if (flyingLevel > 0) {
-            hook.setDeltaMovement(hook.getDeltaMovement().scale(flyingHookProjectileSpeedMultiplier(flyingLevel)));
-            hook.setNoGravity(true);
-            hook.getPersistentData().putInt(FLYING_HOOK_LEVEL_KEY, Mth.clamp(flyingLevel, 1, 5));
-            flyingHooks.put(owner.getUUID(),
-                    new FlyingHookState(hook.getUUID(), flyingLevel, level.dimension(), hand));
+        InteractionHand hand = PENDING_HOOK_CASTS.remove(owner.getUUID());
+        if (hand != null && hasFlyingHook(owner, owner.getItemInHand(hand))) {
+            hook.getPersistentData().putInt(FLYING_HOOK_LEVEL_KEY, 1);
+            FLYING_HOOKS.start(hook, owner, hand);
         }
     }
 
     private void onEntityLeave(EntityLeaveLevelEvent event) {
-        if (!(event.getEntity() instanceof FishingHook hook)) {
-            return;
-        }
-        clientFlyingHookAnchors.remove(hook.getUUID());
-        if (!event.getLevel().isClientSide() && hook.getOwner() instanceof Player owner) {
-            FlyingHookState state = flyingHooks.get(owner.getUUID());
-            if (state != null && state.hook.equals(hook.getUUID())) {
-                flyingHooks.remove(owner.getUUID());
-            }
-        }
+        if (event.getEntity() instanceof FishingHook hook) removeFlyingHook(hook);
     }
 
     private void onProjectileImpact(ProjectileImpactEvent event) {
-        if (anchorFlyingHook(event)) {
-            return;
-        }
         if (deflectArrow(event)) {
             return;
         }
@@ -1056,111 +898,57 @@ public final class WseeMod {
         tridentHandler.onImpact(trident, level, event);
     }
 
-    private boolean anchorFlyingHook(ProjectileImpactEvent event) {
-        if (!(event.getProjectile() instanceof FishingHook hook)
-                || !(hook.getOwner() instanceof Player owner)) {
-            return false;
-        }
-        if (hook.level().isClientSide()) {
-            if (!isClientFlyingHook(hook, owner) || !isFlyingHookImpact(hook, event.getRayTraceResult())) {
-                return false;
-            }
-            anchorClientFlyingHook(hook, event.getRayTraceResult());
-            event.setCanceled(true);
-            return true;
-        }
-        if (!(hook.level() instanceof ServerLevel level)) {
-            return false;
-        }
-        FlyingHookState state = flyingHooks.get(owner.getUUID());
-        if (state == null || !state.hook.equals(hook.getUUID())
-                || !state.dimension.equals(level.dimension())) {
-            return false;
-        }
-        if (!state.pulling && !anchorFlyingHook(hook, state, event.getRayTraceResult())) {
-            return false;
-        }
-        event.setCanceled(true);
-        return true;
-    }
 
-    private boolean anchorFlyingHook(FishingHook hook, FlyingHookState state, HitResult hit) {
-        if (!isFlyingHookImpact(hook, hit)) {
-            return false;
-        }
-        if (!(hook.level() instanceof ServerLevel level) || !(hook.getOwner() instanceof Player owner)) {
-            return false;
-        }
-        Vec3 hitLocation = hit.getLocation();
-        state.anchor = hitLocation;
-        state.anchorEntity = null;
-        state.entityAnchorOffset = null;
-        state.anchorBlock = null;
-        state.durabilityCost = 2;
-        if (hit instanceof EntityHitResult entityHit) {
-            Entity target = entityHit.getEntity();
-            state.anchorEntity = target;
-            state.entityAnchorOffset = hitLocation.subtract(target.position());
-            state.durabilityCost = target instanceof ItemEntity ? 3 : 5;
-        } else if (hit instanceof BlockHitResult blockHit) {
-            state.anchorBlock = blockHit.getBlockPos().immutable();
-        }
-        state.pulling = true;
-        hook.setPos(hitLocation);
-        hook.setDeltaMovement(Vec3.ZERO);
-        hook.syncPosition = true;
-        hook.syncVelocity = true;
-        sendFlyingHookAnchor(hook, hitLocation);
-        owner.fallDistance = 0.0F;
-        level.playSound(null, BlockPos.containing(hitLocation), SoundEvents.FISHING_BOBBER_RETRIEVE,
-                SoundSource.PLAYERS, 0.75F, 1.2F);
-        level.sendParticles(ParticleTypes.CLOUD, hitLocation.x, hitLocation.y, hitLocation.z,
-                4 + state.level, 0.25D, 0.25D, 0.25D, 0.03D);
-        return true;
-    }
+
+
 
     private void handleFlyingHookAnchor(FlyingHookAnchorPayload payload, Player receiver) {
-        Entity entity = receiver.level().getEntity(payload.hookEntityId());
-        if (!(entity instanceof FishingHook hook)) {
-            return;
-        }
-        Vec3 anchor = new Vec3(payload.x(), payload.y(), payload.z());
-        clientFlyingHookAnchors.put(hook.getUUID(),
-                new ClientFlyingHookAnchor(anchor, null, null, null));
-        hook.setPos(anchor);
-        hook.setDeltaMovement(Vec3.ZERO);
+        CLIENT_HOOKS.update(payload, receiver);
     }
 
     private static void sendFlyingHookAnchor(FishingHook hook, Vec3 anchor) {
+        FlyingHookController.Anchor state = FLYING_HOOKS.snapshot(hook);
+        if (state == null) return;
+        Vec3 offset = state.offset();
         PacketDistributor.sendToPlayersTrackingEntity(hook,
-                new FlyingHookAnchorPayload(hook.getId(), anchor.x, anchor.y, anchor.z));
+                new FlyingHookAnchorPayload(hook.getId(), hook.getUUID(), state.phase(), state.entityId(),
+                        anchor.x, anchor.y, anchor.z, offset.x, offset.y, offset.z));
     }
 
-    private static boolean isFlyingHookImpact(FishingHook hook, HitResult hit) {
-        if (hit == null) {
-            return false;
-        }
-        if (hit.getType() == HitResult.Type.ENTITY) {
-            return hit instanceof EntityHitResult;
-        }
-        if (hit.getType() != HitResult.Type.BLOCK || !(hit instanceof BlockHitResult blockHit)) {
-            return false;
-        }
-        return !hook.level().getBlockState(blockHit.getBlockPos()).isAir();
+    public static boolean hasFlyingHook(Player player, ItemStack rod) {
+        return rod.is(Items.FISHING_ROD) && enchantmentLevel(player, rod, FLYING_HOOK_ID) > 0;
     }
 
-    private void anchorClientFlyingHook(FishingHook hook, HitResult hit) {
-        if (!isFlyingHookImpact(hook, hit)) {
-            return;
-        }
-        Entity entity = hit instanceof EntityHitResult entityHit ? entityHit.getEntity() : null;
-        Vec3 offset = entity == null ? null : hit.getLocation().subtract(entity.position());
-        BlockPos block = hit instanceof BlockHitResult blockHit ? blockHit.getBlockPos().immutable() : null;
-        clientFlyingHookAnchors.put(hook.getUUID(),
-                new ClientFlyingHookAnchor(hit.getLocation(), entity, offset, block));
-        hook.setPos(hit.getLocation());
-        hook.setDeltaMovement(Vec3.ZERO);
+    public static void prepareFlyingHookCast(Player player, InteractionHand hand) {
+        if (hasFlyingHook(player, player.getItemInHand(hand))) PENDING_HOOK_CASTS.put(player.getUUID(), hand);
+        else PENDING_HOOK_CASTS.remove(player.getUUID());
     }
+
+    public static boolean tickFlyingHookEntity(FishingHook hook) {
+        return hook.level().isClientSide() ? CLIENT_HOOKS.tickHook(hook) : FLYING_HOOKS.tickHook(hook);
+    }
+
+    public static int retrieveFlyingHook(FishingHook hook, ItemStack rod) {
+        return hook.level().isClientSide() ? 0 : FLYING_HOOKS.retrieve(hook, rod);
+    }
+
+    public static void removeFlyingHook(FishingHook hook) {
+        if (hook.level().isClientSide()) CLIENT_HOOKS.remove(hook);
+        else FLYING_HOOKS.remove(hook);
+    }
+
+    public static void clearFlyingHookClientState() { CLIENT_HOOKS.clearAll(); }
+
+    public static void noteFlyingHookDoubleJump(Player player) { FLYING_HOOKS.noteDoubleJump(player); }
+
+    private void useFlyingHook(net.minecraft.server.level.ServerPlayer player, FlyingHookUsePayload payload) {
+        FLYING_HOOKS.use(player, payload.hookUuid(), payload.phase(),
+                payload.offhand() ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND);
+    }
+
+
+
+
 
     private boolean deflectArrow(ProjectileImpactEvent event) {
         if (!(event.getProjectile() instanceof AbstractArrow arrow)
@@ -1254,35 +1042,16 @@ public final class WseeMod {
                 Math.min(8, particles), 0.08D, 0.08D, 0.08D, 0.02D);
     }
 
-    private void finishFlyingHook(Player player, FlyingHookState state, FishingHook hook) {
-        flyingHooks.remove(player.getUUID());
-        ItemStack rod = player.getItemInHand(state.hand);
-        if (state.durabilityCost > 0 && rod.is(Items.FISHING_ROD)
-                && enchantmentLevel(player, rod, FLYING_HOOK_ID) > 0 && !player.isCreative()) {
-            rod.hurtAndBreak(state.durabilityCost, player, state.hand);
-            state.durabilityCost = 0;
-        }
-        hook.discard();
-    }
+
 
     private void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         Player player = event.getEntity();
         UUID playerId = player.getUUID();
-        FlyingHookState state = flyingHooks.get(playerId);
-        if (state != null && player.level() instanceof ServerLevel currentLevel) {
-            ServerLevel hookLevel = currentLevel.getServer().getLevel(state.dimension);
-            Entity entity = hookLevel == null ? null : hookLevel.getEntity(state.hook);
-            if (entity instanceof FishingHook hook) {
-                finishFlyingHook(player, state, hook);
-            } else {
-                flyingHooks.remove(playerId);
-            }
-        }
+        FLYING_HOOKS.clear(player);
+        PENDING_HOOK_CASTS.remove(playerId);
         crossbowHandler.onPlayerLoggedOut(playerId);
-        doubleJumpAvailable.remove(playerId);
-        doubleJumpKeyDown.remove(playerId);
-        doubleJumpAirTicks.remove(playerId);
-        doubleJumpInitialHorizontalVelocity.remove(playerId);
+        doubleJumpController.clearPlayer(playerId);
+        cn.wusheng.oatz.movement.ServerMotion.clear(player);
     }
 
     private void onIncomingDamage(LivingIncomingDamageEvent event) {
@@ -1908,10 +1677,6 @@ public final class WseeMod {
     }
 
     private void onEntityTick(EntityTickEvent.Pre event) {
-        if (event.getEntity() instanceof FishingHook hook && prepareFlyingHookTick(hook)) {
-            event.setCanceled(true);
-            return;
-        }
         if (event.getEntity() instanceof ThrownTrident trident
                 && trident.level() instanceof ServerLevel level) {
             tridentHandler.tick(trident, level);
@@ -1978,114 +1743,15 @@ public final class WseeMod {
         bleedingNextDamage.put(target.getUUID(), now + 20L);
     }
 
-    private boolean prepareFlyingHookTick(FishingHook hook) {
-        if (!hook.isNoGravity()) {
-            if (hook.level().isClientSide()) {
-                clientFlyingHookAnchors.remove(hook.getUUID());
-            }
-            return false;
-        }
-        if (!(hook.getOwner() instanceof Player owner)) {
-            return false;
-        }
-        if (hook.level().isClientSide()) {
-            if (!isClientFlyingHook(hook, owner)) {
-                clientFlyingHookAnchors.remove(hook.getUUID());
-                return false;
-            }
-            ClientFlyingHookAnchor state = clientFlyingHookAnchors.get(hook.getUUID());
-            if (state != null) {
-                Vec3 anchor = resolveClientFishingAnchor(hook, state);
-                if (anchor == null) {
-                    clientFlyingHookAnchors.remove(hook.getUUID());
-                } else {
-                    hook.setPos(anchor);
-                }
-                hook.setDeltaMovement(Vec3.ZERO);
-                return false;
-            }
-            HitResult hit = findFlyingHookImpact(hook, owner);
-            if (isFlyingHookImpact(hook, hit)) {
-                anchorClientFlyingHook(hook, hit);
-            }
-            return false;
-        }
-        FlyingHookState state = flyingHooks.get(owner.getUUID());
-        if (state == null || !state.hook.equals(hook.getUUID())) {
-            return false;
-        }
-        if (!state.pulling) {
-            anchorFlyingHook(hook, state, findFlyingHookImpact(hook, owner));
-        }
-        if (!state.pulling) {
-            double maxDistance = flyingHookMaxDistance(state.level);
-            if (owner.position().distanceToSqr(hook.position()) >= maxDistance * maxDistance) {
-                finishFlyingHook(owner, state, hook);
-                return true;
-            }
-            return false;
-        }
-        Vec3 anchor = resolveFishingAnchor(hook, state);
-        if (anchor == null) {
-            finishFlyingHook(owner, state, hook);
-            return true;
-        }
-        boolean moved = state.anchor == null || state.anchor.distanceToSqr(anchor) > 1.0E-8D;
-        state.anchor = anchor;
-        hook.setPos(anchor);
-        hook.setDeltaMovement(Vec3.ZERO);
-        hook.syncPosition = true;
-        hook.syncVelocity = true;
-        if (moved) {
-            sendFlyingHookAnchor(hook, anchor);
-        }
-        return true;
-    }
 
-    private void onEntityTickPost(EntityTickEvent.Post event) {
-        if (!(event.getEntity() instanceof FishingHook hook) || !hook.level().isClientSide()) {
-            return;
-        }
-        ClientFlyingHookAnchor state = clientFlyingHookAnchors.get(hook.getUUID());
-        if (state == null) {
-            return;
-        }
-        Vec3 anchor = resolveClientFishingAnchor(hook, state);
-        if (anchor == null) {
-            clientFlyingHookAnchors.remove(hook.getUUID());
-            return;
-        }
-        hook.setPos(anchor);
-        hook.setDeltaMovement(Vec3.ZERO);
-    }
 
-    private static Vec3 resolveClientFishingAnchor(FishingHook hook, ClientFlyingHookAnchor state) {
-        if (state.entity() != null) {
-            Entity entity = state.entity();
-            if (entity.isRemoved() || !entity.canInteractWithLevel() || entity.level() != hook.level()) {
-                return null;
-            }
-            return entity.position().add(state.entityOffset() == null ? Vec3.ZERO : state.entityOffset());
-        }
-        if (state.block() != null
-                && hook.level().getBlockState(state.block()).getShape(hook.level(), state.block()).isEmpty()) {
-            return null;
-        }
-        return state.anchor();
-    }
 
-    private static boolean isClientFlyingHook(FishingHook hook, Player owner) {
-        return hook.isNoGravity()
-                && (enchantmentLevel(owner, owner.getMainHandItem(), FLYING_HOOK_ID) > 0
-                || enchantmentLevel(owner, owner.getOffhandItem(), FLYING_HOOK_ID) > 0);
-    }
 
-    private static HitResult findFlyingHookImpact(FishingHook hook, Player owner) {
-        return ProjectileUtil.getHitResultOnMoveVector(hook,
-                target -> target != owner && !target.isRemoved() && !target.isSpectator()
-                        && !owner.isPassengerOfSameVehicle(target),
-                ClipContext.Block.OUTLINE);
-    }
+
+
+
+
+
 
     private void tickHolyField(ServerPlayer player, ServerLevel level) {
         HolyField field = holyFields.get(player.getUUID());

@@ -1,0 +1,13 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="All Rights Reserved"
+[[mods]]
+modId="wsee_server_validation"
+version="1"
+displayName="WSEE isolated server validation"
+[[dependencies.wsee_server_validation]]
+modId="wsee"
+type="required"
+versionRange="[0.1.1,)"
+ordering="AFTER"
+side="SERVER"

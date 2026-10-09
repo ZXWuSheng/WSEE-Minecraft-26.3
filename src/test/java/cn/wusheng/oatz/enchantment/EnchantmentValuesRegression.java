@@ -10,14 +10,11 @@ public final class EnchantmentValuesRegression {
     }
 
     public static void main(String[] args) {
-        double[] flyingSpeeds = {0.55D, 0.65D, 0.75D, 0.85D, 0.95D};
-        int[] flyingRanges = {24, 30, 36, 42, 48};
-        double[] flyingProjectileSpeeds = {1.15D, 1.30D, 1.45D, 1.60D, 1.75D};
         double[] shieldPercentages = {0.08D, 0.12D, 0.16D, 0.20D, 0.25D};
         for (int level = 1; level <= 5; level++) {
-            equal(flyingSpeeds[level - 1], EnchantmentValues.flyingHookPullSpeed(level));
-            equal(flyingRanges[level - 1], EnchantmentValues.flyingHookMaxDistance(level));
-            equal(flyingProjectileSpeeds[level - 1], EnchantmentValues.flyingHookProjectileSpeedMultiplier(level));
+            equal(0.55D, EnchantmentValues.flyingHookPullSpeed(level));
+            equal(32, EnchantmentValues.flyingHookMaxDistance(level));
+            equal(1.15D, EnchantmentValues.flyingHookProjectileSpeedMultiplier(level));
             equal(shieldPercentages[level - 1], EnchantmentValues.shieldAbsorptionPercent(level));
             equal(5.0D + level, EnchantmentValues.swordAuraRange(level));
         }
@@ -83,8 +80,8 @@ public final class EnchantmentValuesRegression {
         equal(20, EnchantmentValues.holyLightHealIntervalTicks());
         equal(7200, EnchantmentValues.holyLightCooldownTicks());
         equal(4.0D, EnchantmentValues.fallingStarFallThreshold());
-        equal(60, EnchantmentValues.flyingHookTimeoutTicks());
-        equal(0.65D, EnchantmentValues.doubleJumpVerticalVelocity());
+        equal(120, EnchantmentValues.flyingHookTimeoutTicks());
+        equal(0.65D, EnchantmentValues.doubleJumpVerticalImpulse());
         equal(2.0D, EnchantmentValues.doubleJumpSafeFallBonus());
         System.out.println("Enchantment numeric regression: " + assertions + " assertions passed");
     }

@@ -194,9 +194,7 @@ public final class ModRegistries {
                             output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(foundation, level)));
                         }
                         output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(airForce, 1)));
-                        for (int level = 1; level <= 5; level++) {
-                            output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(flyingHook, level)));
-                        }
+                        output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(flyingHook, 1)));
                         output.accept(EnchantmentHelper.createBook(new EnchantmentInstance(doubleJump, 1)));
                     })
                     .build());
