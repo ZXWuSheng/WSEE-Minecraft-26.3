@@ -34,6 +34,10 @@ public final class ClientHooks {
         MOVEMENT_IMPULSES.apply(Minecraft.getInstance().player, payload);
     }
 
+    public static void handleFlyingHookPull(FlyingHookPullPayload payload) {
+        MOVEMENT_IMPULSES.applyPull(Minecraft.getInstance().player, payload);
+    }
+
     public static void handleTrackingTarget(TrackingTargetPayload payload) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null) {

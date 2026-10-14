@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** A held use key must not cycle cast / reel / cancel through vanilla auto-repeat. */
+/** A held cast key must not cancel automatic reeling through vanilla auto-repeat. */
 @Mixin(Minecraft.class)
 public abstract class FlyingHookInputMixin implements FlyingHookInputAccess {
     @Unique
@@ -60,7 +60,7 @@ public abstract class FlyingHookInputMixin implements FlyingHookInputAccess {
         }
         this.wsee$flyingHookUseConsumed = true;
         if (phase != 0) {
-            // Bind the operation to this exact hook and phase. No predicted pull
+            // Bind recall to this exact hook and observed phase. No predicted pull
             // and no accompanying vanilla use packet can affect a newer cast.
             if (hand != null) {
                 ClientPacketDistributor.sendToServer(new FlyingHookUsePayload(hook.getUUID(), phase, hand == InteractionHand.OFF_HAND));

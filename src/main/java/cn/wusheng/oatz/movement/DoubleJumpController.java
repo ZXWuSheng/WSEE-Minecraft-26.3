@@ -8,6 +8,7 @@ import java.util.UUID;
 public final class DoubleJumpController {
     /** Added once to world-space Y; deliberately no minimum upward velocity. */
     public static final double VERTICAL_IMPULSE = 0.65D;
+    public static final double MAX_FALL_COMPENSATION = 0.25D;
     private final Map<UUID, Cycle> cycles = new HashMap<>();
 
     private static final class Cycle {
@@ -86,7 +87,16 @@ public final class DoubleJumpController {
     }
 
     public static double addVerticalImpulse(double currentY) {
-        return currentY + VERTICAL_IMPULSE;
+        return currentY + VERTICAL_IMPULSE + fallCompensation(currentY, MAX_FALL_COMPENSATION);
+    }
+
+    /** Consume only the authorized amount of downward speed; never boost an existing rise. */
+    public static double fallCompensation(double currentY, double allowance) {
+        return Math.min(allowance, Math.max(0.0D, -currentY));
+    }
+
+    public static boolean validCompensationAllowance(double allowance) {
+        return Double.isFinite(allowance) && allowance >= 0.0D && allowance <= MAX_FALL_COMPENSATION;
     }
 
     public void clearPlayer(UUID id) {

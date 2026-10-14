@@ -12,7 +12,7 @@ public final class EnchantmentValuesRegression {
     public static void main(String[] args) {
         double[] shieldPercentages = {0.08D, 0.12D, 0.16D, 0.20D, 0.25D};
         for (int level = 1; level <= 5; level++) {
-            equal(0.55D, EnchantmentValues.flyingHookPullSpeed(level));
+            equal(0.594D, EnchantmentValues.flyingHookPullSpeed(level));
             equal(32, EnchantmentValues.flyingHookMaxDistance(level));
             equal(1.15D, EnchantmentValues.flyingHookProjectileSpeedMultiplier(level));
             equal(shieldPercentages[level - 1], EnchantmentValues.shieldAbsorptionPercent(level));

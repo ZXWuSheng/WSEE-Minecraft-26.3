@@ -51,7 +51,7 @@ public final class FlyingHookController {
         LivingEntity target;
         BlockPos block;
         Direction face;
-        double ropeLength, savedFallDistance;
+        double savedFallDistance;
         double lastGap = Double.NaN;
         int ticks, stuckTicks, durability;
 
@@ -203,6 +203,7 @@ public final class FlyingHookController {
             cast.durability = 5;
         } else return false;
         if (!cast.cycle.anchor()) return false;
+        cast.savedFallDistance = cast.owner.fallDistance;
         syncPhase(cast);
         cast.hook.getInterpolation().cancel();
         cast.hook.setPos(cast.anchor);
@@ -238,16 +239,12 @@ public final class FlyingHookController {
         return cast.block != null && blockSupported(cast) ? cast.anchor : null;
     }
 
-    /** Client actions include hook identity and expected phase, so old/duplicate requests are inert. */
+    /** Recall only this cast; a request crossing its automatic impact transition remains valid. */
     public boolean use(Player player, UUID expectedHook, byte expectedPhase, InteractionHand hand) {
         Cast cast = casts.get(player.getUUID());
         if (cast == null || !cast.cycle.matchesRequest(player, expectedHook, expectedPhase)
                 || cast.hand != hand || !valid(cast)) return false;
-        if (cast.cycle.phase() == ANCHORED) {
-            beginReeling(cast);
-        } else {
-            finish(cast, true);
-        }
+        finish(cast, true);
         return true;
     }
 
@@ -256,21 +253,9 @@ public final class FlyingHookController {
         Cast cast = current(hook);
         if (cast == null) { hook.discard(); return 0; }
         if (!valid(cast) || rod != cast.rod) { finish(cast, true); return 0; }
-        if (cast.cycle.phase() == ANCHORED) { beginReeling(cast); return 0; }
         int cost = cast.durability;
         finish(cast, false);
         return cost;
-    }
-
-    private void beginReeling(Cast cast) {
-        Vec3 anchor = resolve(cast);
-        if (anchor == null) { finish(cast, true); return; }
-        if (!cast.cycle.beginReeling()) return;
-        cast.anchor = anchor;
-        cast.ropeLength = anchor.distanceTo(cast.owner.getBoundingBox().getCenter()) + MovementMath.REEL_SPEED;
-        cast.savedFallDistance = cast.owner.fallDistance;
-        syncPhase(cast);
-        syncAnchor.accept(cast.hook, anchor);
     }
 
     public void tickPlayer(Player player) {
@@ -287,7 +272,6 @@ public final class FlyingHookController {
             finish(cast, true); return;
         }
         Vec3 toAnchor = anchor.subtract(player.getBoundingBox().getCenter());
-        boolean taut = toAnchor.length() > cast.ropeLength;
         Vec3 probe = toAnchor.normalize().scale(0.05D);
         // As in ServerMotion, a new accepted movement sample is required:
         // network latency alone must not count as an obstructed attempt.
@@ -299,25 +283,16 @@ public final class FlyingHookController {
                         player.getBoundingBox().expandTowards(probe).inflate(1.0E-7D)));
         // Observe a real movement attempt before cancelling; a supporting floor
         // after a downward cast and successful vanilla stepping are not walls.
-        if (taut && blockedAlongRope) { finish(cast, true); return; }
-        if (taut && actualMovement != null && (player.horizontalCollision || player.verticalCollision) && !player.onGround()
+        if (blockedAlongRope) { finish(cast, true); return; }
+        if (actualMovement != null && (player.horizontalCollision || player.verticalCollision) && !player.onGround()
                 && !Double.isNaN(cast.lastGap) && cast.lastGap - gap < 0.01D) cast.stuckTicks++;
         else cast.stuckTicks = 0;
         cast.lastGap = gap;
         if (cast.stuckTicks >= MovementMath.STUCK_TICKS) { finish(cast, true); return; }
-        Vec3 current = ServerMotion.basis(player);
-        MovementMath.Pull pull = MovementMath.reel(current, toAnchor, gap, cast.ropeLength);
-        cast.ropeLength = pull.ropeLength();
-        if (!pull.velocity().equals(current)) {
-            Vec3 delta = pull.velocity().subtract(current);
-            double limit = delta.dot(toAnchor) > 0.0D ? MovementMath.radialSpeedLimit(gap) : -1.0D;
-            ServerMotion.applyImpulse(player, delta, limit);
-            cast.lastPullPosition = player.position();
-            cast.lastPullMovement = observation;
-        } else if (cast.lastPullPosition != null) {
-            cast.lastPullPosition = player.position();
-            cast.lastPullMovement = observation;
-        }
+        Vec3 target = MovementMath.pullTarget(toAnchor, gap);
+        ServerMotion.applyDirectPull(player, cast.hook.getUUID(), target);
+        cast.lastPullPosition = player.position();
+        cast.lastPullMovement = observation;
         player.fallDistance = 0.0D; // Existing hook rule; restored on cancellation, not permanent immunity.
         if (cast.ticks % 4 == 0) ((ServerLevel) player.level()).sendParticles(ParticleTypes.CLOUD,
                 player.getX(), player.getY() + 0.5D, player.getZ(), 1, 0.12D, 0.12D, 0.12D, 0.01D);

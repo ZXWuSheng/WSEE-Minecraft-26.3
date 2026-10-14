@@ -4,6 +4,7 @@ import cn.wusheng.oatz.ClientHooks;
 import cn.wusheng.oatz.DoubleJumpPayload;
 import cn.wusheng.oatz.FlyingHookAnchorPayload;
 import cn.wusheng.oatz.FlyingHookUsePayload;
+import cn.wusheng.oatz.FlyingHookPullPayload;
 import cn.wusheng.oatz.MovementImpulsePayload;
 import cn.wusheng.oatz.movement.ServerMotion;
 import cn.wusheng.oatz.ShieldBashPayload;
@@ -29,7 +30,7 @@ public final class ModNetworking {
             BiConsumer<FlyingHookAnchorPayload, Player> flyingHookAnchor,
             BiConsumer<ServerPlayer, FlyingHookUsePayload> flyingHookUse) {
         ServerMotion.setSender((player, payload) -> PacketDistributor.sendToPlayer(player, payload));
-        var registrar = event.registrar("4");
+        var registrar = event.registrar("6");
         registrar.playToServer(ShieldBashPayload.TYPE, ShieldBashPayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() -> {
                     if (context.player() instanceof ServerPlayer player) {
@@ -58,6 +59,8 @@ public final class ModNetworking {
                 (payload, context) -> context.enqueueWork(() -> ClientHooks.handleTrackingTarget(payload)));
         registrar.playToClient(MovementImpulsePayload.TYPE, MovementImpulsePayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() -> ClientHooks.handleMovementImpulse(payload)));
+        registrar.playToClient(FlyingHookPullPayload.TYPE, FlyingHookPullPayload.STREAM_CODEC,
+                (payload, context) -> context.enqueueWork(() -> ClientHooks.handleFlyingHookPull(payload)));
         registrar.playToClient(FlyingHookAnchorPayload.TYPE, FlyingHookAnchorPayload.STREAM_CODEC,
                 (payload, context) -> context.enqueueWork(() ->
                         flyingHookAnchor.accept(payload, context.player())));

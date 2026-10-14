@@ -468,8 +468,7 @@ public final class WseeMod {
         }
         // The server authorizes one increment; the owner adds it to its actual
         // current inertia when received, instead of accepting stale server X/Z.
-        cn.wusheng.oatz.movement.ServerMotion.applyImpulse(player,
-                new Vec3(0.0D, DoubleJumpController.VERTICAL_IMPULSE, 0.0D));
+        cn.wusheng.oatz.movement.ServerMotion.applyDoubleJump(player);
         player.fallDistance = 0.0F;
         noteFlyingHookDoubleJump(player);
         if (player.level() instanceof ServerLevel levelWorld) {

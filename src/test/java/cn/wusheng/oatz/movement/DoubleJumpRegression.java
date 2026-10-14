@@ -16,16 +16,17 @@ public final class DoubleJumpRegression {
     }
 
     private static void impulseCases() {
-        // Stationary, sprint launch, rising, falling, externally forced and
-        // fast-falling movement all use current Y plus exactly one increment.
-        for (double y : new double[] {0.0D, 0.42D, 1.1D, -0.3D, 2.5D, -2.0D}) {
-            close(y + 0.65D, DoubleJumpController.addVerticalImpulse(y));
+        // Rising motion keeps the base impulse. Falling motion gets at most
+        // .25 extra, without granting a minimum launch speed during fast falls.
+        double[][] cases = {{0, .65D}, {.42D, 1.07D}, {1.1D, 1.75D}, {2.5D, 3.15D},
+                {-.1D, .65D}, {-.25D, .65D}, {-.3D, .6D}, {-.4D, .5D}, {-.8D, .1D}, {-2, -1.1D}};
+        for (double[] sample : cases) {
+            close(sample[1], DoubleJumpController.addVerticalImpulse(sample[0]));
         }
-        close(-1.35D, DoubleJumpController.addVerticalImpulse(-2.0D));
-        // Hook acceleration is additive in either ordering. Its following tick
-        // changes motion naturally instead of replacing this jump's velocity.
-        close(DoubleJumpController.addVerticalImpulse(-0.2D) + 0.08D,
-                DoubleJumpController.addVerticalImpulse(-0.2D + 0.08D));
+        close(0, DoubleJumpController.fallCompensation(.4D, .25D));
+        close(.1D, DoubleJumpController.fallCompensation(-.1D, .25D));
+        close(.25D, DoubleJumpController.fallCompensation(-2, .25D));
+        close(.1D, DoubleJumpController.fallCompensation(-2, .1D));
     }
 
     private static void inputCycle() {

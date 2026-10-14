@@ -5,6 +5,7 @@ import java.util.UUID;
 
 /** The production cast lifecycle and force gate, independent of world/entity APIs. */
 public final class FlyingHookCycle {
+    // Keep the former waiting phase's wire ID reserved; new casts skip it.
     public static final byte INACTIVE = 0, FLYING = 1, ANCHORED = 2, REELING = 3;
     private final UUID hook;
     private final Object owner;
@@ -22,17 +23,14 @@ public final class FlyingHookCycle {
     }
 
     public boolean matchesRequest(Object player, UUID expectedHook, byte expectedPhase) {
-        return phase != INACTIVE && player == owner && hook.equals(expectedHook) && expectedPhase == phase;
+        // Recall has the same meaning before and after impact. A flying-phase
+        // cancellation may arrive after this exact hook has begun auto-reeling.
+        return phase != INACTIVE && player == owner && hook.equals(expectedHook)
+                && (expectedPhase == phase || expectedPhase == FLYING && phase == REELING);
     }
 
     public boolean anchor() {
         if (phase != FLYING) return false;
-        phase = ANCHORED;
-        return true;
-    }
-
-    public boolean beginReeling() {
-        if (phase != ANCHORED) return false;
         phase = REELING;
         return true;
     }

@@ -7,99 +7,83 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
-/** Tests the production rope force calculation, independent of a running world. */
+/** Tests direct steering and trajectories, independent of a running world. */
 public final class MovementMathRegression {
     private static int checks;
 
     public static void main(String[] args) {
-        slackAndArrival();
-        inertiaAndSpeedLimit();
-        diagonalMotion();
+        targetsAndArrival();
+        removesSidewaysSwing();
         jumpDuringReeling();
-        nearAnchorPreservesMotion();
-        repeatedReeling();
+        repeatedDirectPull();
         realCollisionAnchors();
         System.out.println("Flying Hook motion regression: " + checks + " assertions passed");
     }
 
-    private static void slackAndArrival() {
-        Vec3 external = new Vec3(0.75D, 1.4D, -2.1D);
-        MovementMath.Pull slack = MovementMath.reel(external, new Vec3(10, 0, 0), 9, 12);
-        equal(external, slack.velocity());
-        close(11.65D, slack.ropeLength());
-        MovementMath.Pull arrival = MovementMath.reel(external, new Vec3(1, 0, 0), 0.7D, 2);
-        equal(external, arrival.velocity());
-        close(1.65D, arrival.ropeLength());
-        equal(external, MovementMath.reel(external, Vec3.ZERO, 0, 2).velocity());
+    private static void targetsAndArrival() {
+        equal(new Vec3(.594D, 0, 0), MovementMath.pullTarget(new Vec3(10, 0, 0), 9));
+        equal(Vec3.ZERO, MovementMath.pullTarget(new Vec3(1, 0, 0), .7D));
+        equal(Vec3.ZERO, MovementMath.pullTarget(Vec3.ZERO, 3));
+        equal(Vec3.ZERO, MovementMath.pullTarget(new Vec3(Double.NaN, 0, 0), 9));
+        close(.297D, MovementMath.pullTarget(new Vec3(3, 0, 0), 2).length());
+        close(.594D, MovementMath.pullTarget(new Vec3(10, 5, -6), 9).length());
         close(32.0D, MovementMath.MAX_DISTANCE);
     }
 
-    private static void inertiaAndSpeedLimit() {
-        Vec3 current = new Vec3(0.10D, 1.4D, -2.1D);
-        Vec3 pulled = MovementMath.reel(current, new Vec3(10, 0, 0), 9, 9).velocity();
-        close(0.34D, pulled.x);
-        close(current.y, pulled.y);
-        close(current.z, pulled.z);
-        // An unrelated external radial speed above the hook's cap is retained.
-        Vec3 fast = new Vec3(2.0D, -0.4D, 3.0D);
-        equal(fast, MovementMath.reel(fast, new Vec3(10, 0, 0), 9, 9).velocity());
-        Vec3 nearCap = new Vec3(0.52D, -0.1D, 0.8D);
-        Vec3 capped = MovementMath.reel(nearCap, new Vec3(10, 0, 0), 9, 9).velocity();
-        close(MovementMath.MAX_RADIAL_SPEED, capped.x);
-        close(nearCap.y, capped.y);
-        close(nearCap.z, capped.z);
-    }
-
-    private static void diagonalMotion() {
-        Vec3 anchorDirection = new Vec3(10, 5, -6);
-        Vec3 normal = anchorDirection.normalize();
-        for (Vec3 current : new Vec3[] {
-                Vec3.ZERO, new Vec3(-0.7D, 0.4D, 1.8D), new Vec3(2.0D, -3.0D, -0.5D)}) {
-            Vec3 after = MovementMath.reel(current, anchorDirection, 10, 9).velocity();
-            Vec3 beforeTangent = current.subtract(normal.scale(current.dot(normal)));
-            Vec3 afterTangent = after.subtract(normal.scale(after.dot(normal)));
-            equal(beforeTangent, afterTangent);
-            double suppliedAcceleration = after.subtract(current).length();
-            check(suppliedAcceleration <= MovementMath.PULL_ACCELERATION + 1.0E-9D);
+    private static void removesSidewaysSwing() {
+        for (Vec3 direction : new Vec3[] {new Vec3(10, 0, 0), new Vec3(10, 5, -6), new Vec3(10, -8, 4)}) {
+            Vec3 target = MovementMath.pullTarget(direction, 9);
+            for (Vec3 current : new Vec3[] {Vec3.ZERO, new Vec3(-.7D, .4D, 1.8D), new Vec3(2, -3, -.5D)}) {
+                Vec3 after = MovementMath.directPull(current, target);
+                close(target.x, after.x);
+                close(target.z, after.z);
+                close(0, after.x * direction.z - after.z * direction.x);
+                check(after.y >= current.y && after.y >= target.y);
+            }
         }
     }
 
     private static void jumpDuringReeling() {
         for (double vertical : new double[] {0, 0.42D, 1.1D, -0.3D, -2.0D, 2.5D}) {
             Vec3 jumped = new Vec3(0.1D, DoubleJumpController.addVerticalImpulse(vertical), 1.3D);
-            Vec3 pulled = MovementMath.reel(jumped, new Vec3(10, 0, 0), 9, 9).velocity();
-            close(vertical + 0.65D, pulled.y);
-            close(jumped.z, pulled.z);
-            check(pulled.x > jumped.x);
+            // Base impulse plus bounded falling compensation; steering cannot erase the rise.
+            close(vertical + .65D + Math.min(.25D, Math.max(0, -vertical)), jumped.y);
+            for (Vec3 direction : new Vec3[] {new Vec3(10, 0, 0), new Vec3(10, 8, 0), new Vec3(10, -8, 0)}) {
+                Vec3 target = MovementMath.pullTarget(direction, 9);
+                Vec3 pulled = MovementMath.directPull(jumped, target);
+                check(pulled.y >= jumped.y);
+                if (jumped.y >= target.y) close(jumped.y, pulled.y);
+                Vec3 fallingNaturally = pulled.add(0, -.08D, 0).multiply(.91D, .98D, .91D);
+                Vec3 next = MovementMath.directPull(fallingNaturally, target);
+                if (fallingNaturally.y >= target.y) close(fallingNaturally.y, next.y);
+            }
         }
     }
 
-    private static void nearAnchorPreservesMotion() {
-        Vec3 natural = new Vec3(2, 0.8D, -1.2D);
-        // Near-anchor force reduces only new increments, even above the local cap.
-        equal(natural, MovementMath.reel(natural, new Vec3(3, 0, 0), 2, 2).velocity());
-        Vec3 aboveNearCap = new Vec3(0.4D, 0.8D, -1.2D);
-        equal(aboveNearCap, MovementMath.reel(aboveNearCap, new Vec3(3, 0, 0), 2, 2).velocity());
-        Vec3 atNearCap = new Vec3(MovementMath.radialSpeedLimit(2), 0.8D, -1.2D);
-        equal(atNearCap, MovementMath.reel(atNearCap, new Vec3(3, 0, 0), 2, 2).velocity());
-        MovementMath.Pull gentle = MovementMath.reel(Vec3.ZERO, new Vec3(3, 0, 0), 2, 2);
-        check(gentle.velocity().x > 0 && gentle.velocity().x < MovementMath.PULL_ACCELERATION);
-    }
-
-    private static void repeatedReeling() {
-        Vec3 velocity = new Vec3(0, 1.1D, -0.7D);
-        double length = 20;
-        for (int tick = 0; tick < 240; tick++) {
-            MovementMath.Pull step = MovementMath.reel(velocity, new Vec3(25, 0, 0), 24, length);
-            check(step.velocity().isFinite());
-            check(step.velocity().x <= MovementMath.MAX_RADIAL_SPEED + 1.0E-9D);
-            check(step.velocity().x >= velocity.x - 1.0E-9D);
-            close(velocity.y, step.velocity().y);
-            close(velocity.z, step.velocity().z);
-            check(step.ropeLength() >= MovementMath.ARRIVAL_DISTANCE);
-            check(step.ropeLength() <= length);
-            velocity = step.velocity();
-            length = step.ropeLength();
+    private static void repeatedDirectPull() {
+        // This is a free-air numerical regression, not a Minecraft collision test.
+        // Include lower/upper anchors and lateral motion that used to cause orbiting.
+        for (Vec3 anchor : new Vec3[] {new Vec3(16, 0, 0), new Vec3(12, 12, 6), new Vec3(12, -8, -6)}) {
+            for (boolean jump : new boolean[] {false, true}) {
+                Vec3 position = Vec3.ZERO, velocity = new Vec3(-.5D, .42D, 1.8D);
+                boolean arrived = false;
+                for (int tick = 0; tick < MovementMath.REEL_TIMEOUT; tick++) {
+                    Vec3 toAnchor = anchor.subtract(position);
+                    AABB box = new AABB(position.x - .3D, position.y - .9D, position.z - .3D,
+                            position.x + .3D, position.y + .9D, position.z + .3D);
+                    double gap = Math.sqrt(box.distanceToSqr(anchor));
+                    if (gap <= MovementMath.ARRIVAL_DISTANCE) { arrived = true; break; }
+                    if (jump && tick == 8) velocity = new Vec3(velocity.x,
+                            DoubleJumpController.addVerticalImpulse(velocity.y), velocity.z);
+                    Vec3 pulled = MovementMath.directPull(velocity, MovementMath.pullTarget(toAnchor, gap));
+                    close(0, pulled.x * toAnchor.z - pulled.z * toAnchor.x);
+                    check(pulled.isFinite());
+                    if (jump && tick == 8) check(pulled.y >= velocity.y);
+                    position = position.add(pulled);
+                    velocity = pulled.add(0, -.08D, 0).multiply(.91D, .98D, .91D);
+                }
+                check(arrived);
+            }
         }
     }
 

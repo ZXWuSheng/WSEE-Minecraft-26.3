@@ -35,7 +35,7 @@ public final class EnchantmentValues {
     }
 
     public static double flyingHookPullSpeed(int level) {
-        return cn.wusheng.oatz.movement.MovementMath.MAX_RADIAL_SPEED;
+        return cn.wusheng.oatz.movement.MovementMath.MAX_PULL_SPEED;
     }
 
     public static int flyingHookMaxDistance(int level) {

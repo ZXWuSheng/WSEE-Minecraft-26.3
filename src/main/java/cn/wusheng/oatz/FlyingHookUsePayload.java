@@ -6,7 +6,7 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 import java.util.UUID;
 
-/** An action applies only to this cast and its expected phase. */
+/** Recall identifies the cast and observed phase; impact may occur in transit. */
 public record FlyingHookUsePayload(UUID hookUuid, byte phase, boolean offhand) implements CustomPacketPayload {
     public static final Type<FlyingHookUsePayload> TYPE =
             new Type<>(Identifier.fromNamespaceAndPath(WseeMod.MOD_ID, "flying_hook_use"));

@@ -38,3 +38,5 @@ Desktop.ini
 # Crash dumps and local launcher caches
 crash-reports/
 launcher_log.txt
+
+scripts/

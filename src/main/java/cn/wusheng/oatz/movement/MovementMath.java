@@ -6,34 +6,41 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
-/** Rope forces change only radial motion; vanilla movement owns position and collisions. */
+/** Direct grapple steering; vanilla movement still owns position and collisions. */
 public final class MovementMath {
     public static final double MAX_DISTANCE = 32.0D; // Vanilla FishingHook: distance squared <= 1024.
     public static final double PROJECTILE_SPEED_MULTIPLIER = 1.15D;
-    public static final double REEL_SPEED = 0.35D;
-    public static final double PULL_ACCELERATION = 0.24D;
-    public static final double MAX_RADIAL_SPEED = 0.55D;
+    public static final double MAX_PULL_SPEED = 0.594D;
     public static final double ARRIVAL_DISTANCE = 1.5D;
     public static final double SLOWDOWN_DISTANCE = 3.0D;
-    public static final double MIN_TENSION_FACTOR = 0.5D;
+    public static final double MIN_PULL_FACTOR = 0.5D;
     public static final int REEL_TIMEOUT = 120;
     public static final int STUCK_TICKS = 10;
 
     private MovementMath() {}
-
-    public record Pull(Vec3 velocity, double ropeLength) {}
 
     public static Vec3 flyingVelocity(Vec3 current, double gravity) {
         return current.add(0.0D, -gravity, 0.0D);
     }
 
     private static double proximityFactor(double boxGap) {
-        return Math.min(1.0D, Math.max(MIN_TENSION_FACTOR,
+        return Math.min(1.0D, Math.max(MIN_PULL_FACTOR,
                 (boxGap - ARRIVAL_DISTANCE) / SLOWDOWN_DISTANCE));
     }
 
-    public static double radialSpeedLimit(double boxGap) {
-        return MAX_RADIAL_SPEED * proximityFactor(boxGap);
+    public static Vec3 pullTarget(Vec3 toAnchor, double boxGap) {
+        if (!toAnchor.isFinite() || !Double.isFinite(boxGap) || boxGap <= ARRIVAL_DISTANCE
+                || toAnchor.lengthSqr() < 1.0E-16D) return Vec3.ZERO;
+        return toAnchor.normalize().scale(MAX_PULL_SPEED * proximityFactor(boxGap));
+    }
+
+    /** The target is authorized by the server; read Y at receipt, after any jump impulse. */
+    public static Vec3 directPull(Vec3 current, Vec3 target) {
+        if (!current.isFinite() || !target.isFinite()) return current;
+        // Horizontal steering removes pendulum motion. Never reduce existing
+        // upward motion: a jump can lift the player above even a lower anchor.
+        // Gravity consumes that rise naturally; no stored/predicted jump bonus.
+        return new Vec3(target.x, Math.max(current.y, target.y), target.z);
     }
 
     public static boolean supportsAnchor(VoxelShape shape, BlockPos block, Direction face, Vec3 anchor) {
@@ -53,22 +60,4 @@ public final class MovementMath {
         return false;
     }
 
-    public static Pull reel(Vec3 current, Vec3 toAnchor, double boxGap, double ropeLength) {
-        double length = Math.max(ARRIVAL_DISTANCE, ropeLength - REEL_SPEED);
-        double distance = toAnchor.length();
-        if (distance < 1.0E-8D || distance <= length || boxGap <= ARRIVAL_DISTANCE) {
-            return new Pull(current, length);
-        }
-        Vec3 radial = toAnchor.scale(1.0D / distance);
-        double speed = current.dot(radial);
-        // 近端保留有限张力，避免在到达边界外渐近停住，或因重力无法完成向上收绳。
-        double proximity = proximityFactor(boxGap);
-        double cap = radialSpeedLimit(boxGap);
-        double extra = Math.min(PULL_ACCELERATION * proximity,
-                Math.min((distance - length) * 0.4D, Math.max(0.0D, cap - speed)));
-        // The receipt may reduce an authorized increment against actual client
-        // speed. The server cannot infer its realized contribution, so near the
-        // anchor it only reduces new force and never subtracts existing motion.
-        return new Pull(current.add(radial.scale(extra)), length);
-    }
 }
