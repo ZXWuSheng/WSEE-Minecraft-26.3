@@ -116,9 +116,9 @@ All WSEE enchantments are custom, equipment-specific enchantments. Their data de
 
 ### Flying Hook enchantment
 
-- Flying Hook (`flying_hook`) is fishing-rod-only, maximum level V. It accelerates the real FishingHook by x1.15/x1.30/x1.45/x1.60/x1.75 with no downward arc, anchors at the exact contact point of any entity or any block face, and automatically pulls the player at 0.55/0.65/0.75/0.85/0.95 speed, with 24/30/36/42/48 block range.
+- Flying Hook (`flying_hook`) is fishing-rod-only, maximum level V. It accelerates the real FishingHook by x1.15/x1.30/x1.45/x1.60/x1.75 while retaining vanilla gravity and a downward arc, anchors using collision-shape center rays and swept-hook-hitbox contacts at the exact contact point of entities or physical block faces (excluding grass plants, flowers, and vines without collision shapes), and automatically pulls the player at 0.55/0.65/0.75/0.85/0.95 speed, with 24/30/36/42/48 block range.
 - It conflicts with vanilla Lure, Luck of the Sea, and Air Force. If forced into an illegal combination, Flying Hook mode takes priority and suppresses normal fishing loot. Unbreaking, Mending, and Curse of Vanishing remain vanilla-compatible.
-- Pulling uses DeltaMovement, never teleportation; stop at <=1.5 blocks, 60 ticks, missing anchors, no progress for 10 ticks, dimension change, death, riding, gliding, or creative flight. Preserve vanilla durability, fall-damage reset/restore, hook collision, and entity behavior.
+- Pulling uses DeltaMovement, never teleportation. Allow the first movement attempt and vanilla stepping; supporting ground must not cancel horizontal pulling after a downward cast. Stop when a contacted block face actually prevents movement in the pull direction, or at <=1.5 blocks, 60 ticks, missing anchors, no progress for 10 ticks, dimension change, death, riding, gliding, or creative flight. Preserve vanilla durability, fall-damage reset/restore, hook collision, and entity behavior.
 
 ### Double Jump enchantment
 

@@ -2,21 +2,11 @@ package cn.wusheng.oatz.mixin;
 
 import net.minecraft.world.entity.projectile.FishingHook;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Constant;
-import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyConstant;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(FishingHook.class)
 public abstract class FishingHookMixin {
-    @Inject(method = "getDefaultGravity", at = @At("HEAD"), cancellable = true)
-    private void wsee$honorNoGravity(CallbackInfoReturnable<Double> callback) {
-        if (((FishingHook) (Object) this).isNoGravity()) {
-            callback.setReturnValue(0.0D);
-        }
-    }
-
     @ModifyConstant(
             method = "shouldStopFishing",
             constant = @Constant(doubleValue = 1024.0D),

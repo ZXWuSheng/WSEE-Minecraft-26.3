@@ -356,6 +356,7 @@ public final class WseeMod {
     private static final String DEFLECTED_KEY = "wsee_deflected";
     private static final String ARROW_RAIN_PROJECTILE_KEY = "wsee_arrow_rain_projectile";
     private static final String FLYING_HOOK_LEVEL_KEY = "wsee_flying_hook_level";
+    private static final String FLYING_HOOK_ANCHORED_KEY = "wsee_flying_hook_anchored";
     private static final Field ARROW_BASE_DAMAGE_FIELD = findArrowBaseDamageField();
     private static final Identifier SLOW_MODIFIER_ID = Identifier.fromNamespaceAndPath(MOD_ID, "shield_bash_slow");
     private static final Identifier SHIELD_ABSORPTION_LIMIT_ID = Identifier.fromNamespaceAndPath(MOD_ID, "shield_absorption_limit");
@@ -414,6 +415,8 @@ public final class WseeMod {
         private final ResourceKey<Level> dimension;
         private final InteractionHand hand;
         private Vec3 anchor;
+        private Vec3 lastSyncedAnchor;
+        private Vec3 lastPullPosition;
         private Entity anchorEntity;
         private Vec3 entityAnchorOffset;
         private BlockPos anchorBlock;
@@ -959,12 +962,13 @@ public final class WseeMod {
             return;
         }
         state.anchor = anchor;
-        if (!Double.isNaN(state.lastDistance) && state.lastDistance - distance < 0.1D) {
+        // Accumulate small advances instead of requiring 0.1 blocks every single tick.
+        if (!Double.isNaN(state.lastDistance) && state.lastDistance - distance < 0.01D) {
             state.stuckTicks++;
         } else {
             state.stuckTicks = 0;
+            state.lastDistance = distance;
         }
-        state.lastDistance = distance;
         if (distance <= 1.5D || ++state.ticks >= 60 || state.stuckTicks >= 10) {
             finishFlyingHook(player, state, hook);
             return;
@@ -975,8 +979,21 @@ public final class WseeMod {
             return;
         }
         Vec3 velocity = direction.normalize().scale(flyingHookPullSpeed(state.level));
+        AABB playerBounds = player.getBoundingBox();
+        // Let vanilla movement (including ground contact and stepping) resolve first.
+        // Stop only at a contacted face that actually prevented the previous pull.
+        Vec3 actualMovement = state.lastPullPosition == null ? null : player.position().subtract(state.lastPullPosition);
+        if (FlyingHookCollision.blocksPull(playerBounds, velocity, actualMovement, player.onGround(),
+                level.getBlockCollisions(player, playerBounds.expandTowards(velocity)))) {
+            finishFlyingHook(player, state, hook);
+            return;
+        }
+        state.lastPullPosition = player.position();
         player.setDeltaMovement(velocity);
         player.syncVelocity = true;
+        if (player instanceof ServerPlayer serverPlayer) {
+            serverPlayer.connection.send(new ClientboundSetEntityMotionPacket(player));
+        }
         player.fallDistance = 0.0F;
         if (state.ticks % 4 == 0) {
             level.sendParticles(ParticleTypes.CLOUD, player.getX(), player.getY() + 0.5D, player.getZ(),
@@ -1014,7 +1031,7 @@ public final class WseeMod {
             return entity.position().add(offset);
         }
         if (state.anchorBlock != null
-                && hook.level().getBlockState(state.anchorBlock).getShape(hook.level(), state.anchorBlock).isEmpty()) {
+                && !hasFlyingHookCollision(hook, state.anchorBlock)) {
             return null;
         }
         return state.anchor;
@@ -1092,12 +1109,9 @@ public final class WseeMod {
                 || player.isSwimming() || player.isPassenger() || player.isFallFlying()
                 || player.getAbilities().flying) {
             doubleJumpAvailable.remove(id);
-            doubleJumpKeyDown.remove(id);
             return;
         }
         if (player.onGround()) {
-            doubleJumpAvailable.put(id, true);
-        } else if (!doubleJumpAvailable.containsKey(id)) {
             doubleJumpAvailable.put(id, true);
         }
         if (jumpPressed && player instanceof ServerPlayer serverPlayer) {
@@ -1107,10 +1121,22 @@ public final class WseeMod {
 
     private void tryDoubleJump(ServerPlayer player) {
         int level = enchantmentLevel(player, player.getItemBySlot(EquipmentSlot.FEET), DOUBLE_JUMP_ID);
-        if (level <= 0 || player.onGround() || player.isSpectator() || player.isSwimming()
+        if (level <= 0 || player.onGround() || player.isDeadOrDying() || player.isSpectator() || player.isSwimming()
                 || player.isPassenger() || player.isFallFlying() || player.getAbilities().flying
                 || !doubleJumpAvailable.getOrDefault(player.getUUID(), false)) {
             return;
+        }
+        // A successful air jump releases the pull before its next tick can overwrite Y.
+        // Failed/repeated jump requests must neither retract the hook nor spend durability.
+        FlyingHookState hookState = flyingHooks.get(player.getUUID());
+        if (hookState != null && hookState.pulling) {
+            ServerLevel hookLevel = player.level().getServer().getLevel(hookState.dimension);
+            Entity hookedEntity = hookLevel == null ? null : hookLevel.getEntity(hookState.hook);
+            if (hookedEntity instanceof FishingHook hook) {
+                finishFlyingHook(player, hookState, hook);
+            } else {
+                flyingHooks.remove(player.getUUID());
+            }
         }
         Vec3 current = player.getDeltaMovement();
         player.setDeltaMovement(current.x, 0.65D, current.z);
@@ -1643,7 +1669,6 @@ public final class WseeMod {
         }
         if (flyingLevel > 0) {
             hook.setDeltaMovement(hook.getDeltaMovement().scale(1.0D + flyingLevel * 0.15D));
-            hook.setNoGravity(true);
             hook.getPersistentData().putInt(FLYING_HOOK_LEVEL_KEY, Mth.clamp(flyingLevel, 1, 5));
             flyingHooks.put(owner.getUUID(),
                     new FlyingHookState(hook.getUUID(), flyingLevel, level.dimension(), hand));
@@ -1651,6 +1676,11 @@ public final class WseeMod {
     }
 
     private void onEntityLeave(EntityLeaveLevelEvent event) {
+        if (!event.getLevel().isClientSide() && event.getEntity() instanceof ServerPlayer player) {
+            UUID id = player.getUUID();
+            doubleJumpAvailable.remove(id);
+            doubleJumpKeyDown.remove(id);
+        }
         if (!(event.getEntity() instanceof FishingHook hook)) {
             return;
         }
@@ -1715,12 +1745,8 @@ public final class WseeMod {
             return false;
         }
         if (hook.level().isClientSide()) {
-            if (!isClientFlyingHook(hook, owner) || !isFlyingHookImpact(hook, event.getRayTraceResult())) {
-                return false;
-            }
-            anchorClientFlyingHook(hook, event.getRayTraceResult());
-            event.setCanceled(true);
-            return true;
+            // Only the server may confirm an anchor and begin pulling.
+            return false;
         }
         if (!(hook.level() instanceof ServerLevel level)) {
             return false;
@@ -1759,11 +1785,12 @@ public final class WseeMod {
             state.anchorBlock = blockHit.getBlockPos().immutable();
         }
         state.pulling = true;
-        hook.setPos(hitLocation);
-        hook.setDeltaMovement(Vec3.ZERO);
+        hook.getPersistentData().putBoolean(FLYING_HOOK_ANCHORED_KEY, true);
+        holdFlyingHookAtAnchor(hook, hitLocation);
         hook.syncPosition = true;
         hook.syncVelocity = true;
         sendFlyingHookAnchor(hook, hitLocation);
+        state.lastSyncedAnchor = hitLocation;
         owner.fallDistance = 0.0F;
         level.playSound(null, BlockPos.containing(hitLocation), SoundEvents.FISHING_BOBBER_RETRIEVE,
                 SoundSource.PLAYERS, 0.75F, 1.2F);
@@ -1780,8 +1807,18 @@ public final class WseeMod {
         Vec3 anchor = new Vec3(payload.x(), payload.y(), payload.z());
         clientFlyingHookAnchors.put(hook.getUUID(),
                 new ClientFlyingHookAnchor(anchor, null, null, null));
+        hook.getPersistentData().putBoolean(FLYING_HOOK_ANCHORED_KEY, true);
+        holdFlyingHookAtAnchor(hook, anchor);
+    }
+
+    private static void holdFlyingHookAtAnchor(FishingHook hook, Vec3 anchor) {
+        hook.getInterpolation().cancel();
         hook.setPos(anchor);
         hook.setDeltaMovement(Vec3.ZERO);
+        // Cancelling EntityTickEvent.Pre also skips commonTick(), which normally advances
+        // the previous render pose. Both poses must match or every frame interpolates
+        // from the last flying position again, making a stationary hook bounce.
+        hook.setOldPosAndRot();
     }
 
     private static void sendFlyingHookAnchor(FishingHook hook, Vec3 anchor) {
@@ -1799,20 +1836,12 @@ public final class WseeMod {
         if (hit.getType() != HitResult.Type.BLOCK || !(hit instanceof BlockHitResult blockHit)) {
             return false;
         }
-        return !hook.level().getBlockState(blockHit.getBlockPos()).isAir();
+        return hasFlyingHookCollision(hook, blockHit.getBlockPos());
     }
 
-    private void anchorClientFlyingHook(FishingHook hook, HitResult hit) {
-        if (!isFlyingHookImpact(hook, hit)) {
-            return;
-        }
-        Entity entity = hit instanceof EntityHitResult entityHit ? entityHit.getEntity() : null;
-        Vec3 offset = entity == null ? null : hit.getLocation().subtract(entity.position());
-        BlockPos block = hit instanceof BlockHitResult blockHit ? blockHit.getBlockPos().immutable() : null;
-        clientFlyingHookAnchors.put(hook.getUUID(),
-                new ClientFlyingHookAnchor(hit.getLocation(), entity, offset, block));
-        hook.setPos(hit.getLocation());
-        hook.setDeltaMovement(Vec3.ZERO);
+    private static boolean hasFlyingHookCollision(FishingHook hook, BlockPos pos) {
+        return !hook.level().getBlockState(pos).getCollisionShape(hook.level(), pos,
+                net.minecraft.world.phys.shapes.CollisionContext.of(hook)).isEmpty();
     }
 
     private boolean deflectArrow(ProjectileImpactEvent event) {
@@ -3351,18 +3380,13 @@ public final class WseeMod {
     }
 
     private boolean prepareFlyingHookTick(FishingHook hook) {
-        if (!hook.isNoGravity()) {
-            if (hook.level().isClientSide()) {
-                clientFlyingHookAnchors.remove(hook.getUUID());
-            }
-            return false;
-        }
         if (!(hook.getOwner() instanceof Player owner)) {
             return false;
         }
         if (hook.level().isClientSide()) {
-            if (!isClientFlyingHook(hook, owner)) {
+            if (!hasFlyingHookRod(owner)) {
                 clientFlyingHookAnchors.remove(hook.getUUID());
+                hook.getPersistentData().remove(FLYING_HOOK_ANCHORED_KEY);
                 return false;
             }
             ClientFlyingHookAnchor state = clientFlyingHookAnchors.get(hook.getUUID());
@@ -3370,15 +3394,12 @@ public final class WseeMod {
                 Vec3 anchor = resolveClientFishingAnchor(hook, state);
                 if (anchor == null) {
                     clientFlyingHookAnchors.remove(hook.getUUID());
+                    hook.getPersistentData().remove(FLYING_HOOK_ANCHORED_KEY);
                 } else {
-                    hook.setPos(anchor);
+                    holdFlyingHookAtAnchor(hook, anchor);
+                    return true;
                 }
-                hook.setDeltaMovement(Vec3.ZERO);
                 return false;
-            }
-            HitResult hit = findFlyingHookImpact(hook, owner);
-            if (isFlyingHookImpact(hook, hit)) {
-                anchorClientFlyingHook(hook, hit);
             }
             return false;
         }
@@ -3397,14 +3418,15 @@ public final class WseeMod {
             finishFlyingHook(owner, state, hook);
             return true;
         }
-        boolean moved = state.anchor == null || state.anchor.distanceToSqr(anchor) > 1.0E-8D;
+        boolean moved = state.lastSyncedAnchor == null || state.lastSyncedAnchor.distanceToSqr(anchor) > 1.0E-8D;
         state.anchor = anchor;
-        hook.setPos(anchor);
-        hook.setDeltaMovement(Vec3.ZERO);
+        holdFlyingHookAtAnchor(hook, anchor);
         hook.syncPosition = true;
         hook.syncVelocity = true;
-        if (moved) {
+        // Refresh also covers an anchor packet arriving before the hook's spawn packet.
+        if (moved || hook.level().getGameTime() % 4L == 0L) {
             sendFlyingHookAnchor(hook, anchor);
+            state.lastSyncedAnchor = anchor;
         }
         return true;
     }
@@ -3420,10 +3442,10 @@ public final class WseeMod {
         Vec3 anchor = resolveClientFishingAnchor(hook, state);
         if (anchor == null) {
             clientFlyingHookAnchors.remove(hook.getUUID());
+            hook.getPersistentData().remove(FLYING_HOOK_ANCHORED_KEY);
             return;
         }
-        hook.setPos(anchor);
-        hook.setDeltaMovement(Vec3.ZERO);
+        holdFlyingHookAtAnchor(hook, anchor);
     }
 
     private static Vec3 resolveClientFishingAnchor(FishingHook hook, ClientFlyingHookAnchor state) {
@@ -3435,23 +3457,69 @@ public final class WseeMod {
             return entity.position().add(state.entityOffset() == null ? Vec3.ZERO : state.entityOffset());
         }
         if (state.block() != null
-                && hook.level().getBlockState(state.block()).getShape(hook.level(), state.block()).isEmpty()) {
+                && !hasFlyingHookCollision(hook, state.block())) {
             return null;
         }
         return state.anchor();
     }
 
-    private static boolean isClientFlyingHook(FishingHook hook, Player owner) {
-        return hook.isNoGravity()
-                && (enchantmentLevel(owner, owner.getMainHandItem(), FLYING_HOOK_ID) > 0
-                || enchantmentLevel(owner, owner.getOffhandItem(), FLYING_HOOK_ID) > 0);
+    private static boolean hasFlyingHookRod(Player owner) {
+        return enchantmentLevel(owner, owner.getMainHandItem(), FLYING_HOOK_ID) > 0
+                || enchantmentLevel(owner, owner.getOffhandItem(), FLYING_HOOK_ID) > 0;
     }
 
     private static HitResult findFlyingHookImpact(FishingHook hook, Player owner) {
-        return ProjectileUtil.getHitResultOnMoveVector(hook,
+        // FishingHook applies gravity immediately before move(), so sweep that path.
+        Vec3 movement = hook.getDeltaMovement();
+        if (!hook.onGround() && !hook.level().getFluidState(hook.blockPosition()).is(FluidTags.WATER)) {
+            movement = movement.add(0.0D, -hook.getGravity(), 0.0D);
+        }
+        Vec3 from = hook.position();
+        Vec3 to = from.add(movement);
+        HitResult nearestHit = hook.level().clipIncludingBorder(
+                new ClipContext(from, to, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, hook));
+        Vec3 entityLimit = nearestHit.getType() == HitResult.Type.MISS ? to : nearestHit.getLocation();
+        EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(hook.level(), hook, from, entityLimit,
+                hook.getBoundingBox().expandTowards(movement).inflate(1.0D),
                 target -> target != owner && !target.isRemoved() && !target.isSpectator()
-                        && !owner.isPassengerOfSameVehicle(target),
-                ClipContext.Block.OUTLINE);
+                        && !owner.isPassengerOfSameVehicle(target), ProjectileUtil.computeMargin(hook));
+        if (entityHit != null) {
+            nearestHit = entityHit;
+        }
+        if (movement.lengthSqr() < 1.0E-14D) {
+            return nearestHit;
+        }
+        double nearestFraction = nearestHit.getType() == HitResult.Type.MISS ? Double.POSITIVE_INFINITY
+                : nearestHit.getLocation().subtract(hook.position()).dot(movement) / movement.lengthSqr();
+        AABB bounds = hook.getBoundingBox();
+        AABB swept = bounds.expandTowards(movement);
+        // Include neighboring origins for shapes such as fences which extend out of their block.
+        for (BlockPos pos : BlockPos.betweenClosed(Mth.floor(swept.minX) - 1, Mth.floor(swept.minY) - 1,
+                Mth.floor(swept.minZ) - 1, Mth.floor(swept.maxX) + 1, Mth.floor(swept.maxY) + 1,
+                Mth.floor(swept.maxZ) + 1)) {
+            if (!hook.level().hasChunkAt(pos)) {
+                continue;
+            }
+            var shape = hook.level().getBlockState(pos).getCollisionShape(hook.level(), pos,
+                    net.minecraft.world.phys.shapes.CollisionContext.of(hook));
+            for (AABB box : shape.toAabbs()) {
+                FlyingHookCollision.Contact contact = FlyingHookCollision.sweep(bounds, movement, box.move(pos), pos);
+                if (contact != null && contact.fraction() < nearestFraction) {
+                    nearestFraction = contact.fraction();
+                    nearestHit = contact.hit();
+                }
+            }
+        }
+        return nearestHit;
+    }
+
+    /** Shared movement guard; the client marker is set only by a server anchor payload. */
+    public static boolean isFlyingHookPulling(Player player) {
+        FishingHook hook = player.fishing;
+        return hook != null && hook.isAlive() && hook.getOwner() == player && hook.level() == player.level()
+                && hook.getPersistentData().getBooleanOr(FLYING_HOOK_ANCHORED_KEY, false)
+                && !player.isDeadOrDying() && !player.isPassenger() && !player.isFallFlying()
+                && !player.getAbilities().flying && hasFlyingHookRod(player);
     }
 
     private void tickSurge(ThrownTrident trident, ServerLevel level) {

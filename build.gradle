@@ -41,3 +41,27 @@ tasks.withType(JavaCompile).configureEach {
 tasks.withType(Jar).configureEach {
     archiveFileName = "WSEE-${project.version}-NeoForge.jar"
 }
+
+sourceSets.test {
+    // The collision fixtures use Minecraft's math types without launching a game.
+    compileClasspath += sourceSets.main.compileClasspath
+    runtimeClasspath += sourceSets.main.runtimeClasspath
+}
+
+tasks.named('test') {
+    // The collision fixtures run through their JavaExec task, not a JUnit runner.
+    exclude '**/FlyingHookCollisionTest.class'
+}
+
+tasks.register('testFlyingHookCollision', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'cn.wusheng.oatz.FlyingHookCollisionTest'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+tasks.named('check') {
+    dependsOn 'testFlyingHookCollision'
+}
