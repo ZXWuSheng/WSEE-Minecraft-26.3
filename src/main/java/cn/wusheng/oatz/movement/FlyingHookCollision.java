@@ -1,4 +1,4 @@
-package cn.wusheng.oatz;
+package cn.wusheng.oatz.movement;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;

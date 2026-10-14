@@ -4,7 +4,14 @@
   "package": "cn.wusheng.oatz.mixin",
   "mixins": [
     "ClimbingMovementMixin",
-    "FishingHookMixin"
+    "FishingHookMixin",
+    "FlyingHookStateMixin",
+    "FishingRodUseMixin"
+  ],
+  "client": [
+    "FlyingHookInputMixin",
+    "FlyingHookUseKeyMixin",
+    "FishingHookRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

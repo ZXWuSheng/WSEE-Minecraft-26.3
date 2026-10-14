@@ -1,4 +1,4 @@
-package cn.wusheng.oatz;
+package cn.wusheng.oatz.movement;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -10,8 +10,9 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import java.util.List;
 
 /** Geometric regression fixtures for real hook hitbox contacts; no game is launched. */
-public final class FlyingHookCollisionTest {
+public final class FlyingHookCollisionRegression {
     private static final AABB BLOCK = new AABB(0, 0, 0, 1, 1, 1);
+    private static int checks;
 
     public static void main(String[] args) {
         Vec3 edgeStart = new Vec3(1.05, 0.5, -1);
@@ -22,10 +23,14 @@ public final class FlyingHookCollisionTest {
         expect(edge.hit().getDirection() == Direction.NORTH, "Keep the actual entry face");
         expect(edge.hit().getLocation().distanceTo(new Vec3(1, 0.5, 0)) < 1.0E-7,
                 "The anchor must be on the original block edge, not its expanded bounds");
+        expect(MovementMath.supportsAnchor(Shapes.block(), BlockPos.ZERO,
+                edge.hit().getDirection(), edge.hit().getLocation()), "Edge anchors must survive the next support check");
 
         var upperEdge = contact(new Vec3(0.5, 1.1, -1), motion, BLOCK);
         expect(upperEdge != null && Math.abs(upperEdge.hit().getLocation().y - 1.0) < 1.0E-7,
                 "Catch the top edge even when the center passes above it");
+        expect(MovementMath.supportsAnchor(Shapes.block(), BlockPos.ZERO,
+                upperEdge.hit().getDirection(), upperEdge.hit().getLocation()), "Top-edge anchors remain supported");
         expect(contact(new Vec3(1.2, 0.5, -1), motion, BLOCK) == null,
                 "A near miss outside the real hook width must remain a miss");
         expect(contact(new Vec3(1.125, 0.5, -1), motion, BLOCK) == null,
@@ -35,11 +40,15 @@ public final class FlyingHookCollisionTest {
         var slabEdge = contact(new Vec3(0.5, 0.6, -1), motion, slab);
         expect(slabEdge != null && Math.abs(slabEdge.hit().getLocation().y - 0.5) < 1.0E-7,
                 "Use the slab collision shape rather than treating it as a full cube");
+        expect(MovementMath.supportsAnchor(Shapes.create(slab), BlockPos.ZERO,
+                slabEdge.hit().getDirection(), slabEdge.hit().getLocation()), "Slab edge remains a valid anchor");
+        expect(!MovementMath.supportsAnchor(Shapes.empty(), BlockPos.ZERO,
+                slabEdge.hit().getDirection(), slabEdge.hit().getLocation()), "Removing the collision shape invalidates an edge anchor");
         expect(contact(new Vec3(0.5, 0.8, -1), motion, slab) == null, "Respect empty space above slabs");
 
         Vec3 fallingStart = new Vec3(0.5, 1.14, -1);
         expect(contact(fallingStart, motion, BLOCK) == null, "The old straight path passes over the edge");
-        var falling = contact(fallingStart, motion.add(0, -0.03F, 0), BLOCK);
+        var falling = contact(fallingStart, MovementMath.flyingVelocity(motion, 0.03F), BLOCK);
         expect(falling != null && falling.hit().getDirection() == Direction.UP,
                 "Gravity turns this near miss into a real top-face hitbox contact");
 
@@ -57,7 +66,15 @@ public final class FlyingHookCollisionTest {
         expect(endpoint != null && endpoint.fraction() == 1.0, "Recognize contact exactly at the tick endpoint");
         expect(contact(edgeStart, Vec3.ZERO, BLOCK) == null, "A stationary hook cannot hit a distant block");
         checkBlockedPulls();
-        System.out.println("Flying Hook collision checks passed (hook contacts and blocked player pulls)");
+        Vec3 flight = new Vec3(1, 0.3, 0.25);
+        for (int tick = 0; tick < 20; tick++) {
+            Vec3 next = MovementMath.flyingVelocity(flight, 0.03F);
+            expect(next.x == flight.x && next.z == flight.z, "Gravity must not change horizontal launch speed");
+            expect(next.y < flight.y, "Gravity applies on every flying tick");
+            flight = next.scale(0.92D);
+        }
+        expect(flight.y < 0, "An upward launch must arc down naturally");
+        System.out.println("Flying Hook collision/gravity regression: " + checks + " assertions passed");
     }
 
     private static void checkBlockedPulls() {
@@ -111,6 +128,7 @@ public final class FlyingHookCollisionTest {
     }
 
     private static void expect(boolean condition, String message) {
+        checks++;
         if (!condition) {
             throw new AssertionError(message);
         }

@@ -1,4 +1,7 @@
 {
   "replace": false,
-  "values": ["wsee:cluster", "minecraft:multishot"]
+  "values": [
+    "wsee:cluster",
+    "minecraft:multishot"
+  ]
 }

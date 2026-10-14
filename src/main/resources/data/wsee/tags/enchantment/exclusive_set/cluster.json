@@ -1,4 +1,7 @@
 {
   "replace": false,
-  "values": ["wsee:expansion", "minecraft:multishot"]
+  "values": [
+    "wsee:expansion",
+    "minecraft:multishot"
+  ]
 }

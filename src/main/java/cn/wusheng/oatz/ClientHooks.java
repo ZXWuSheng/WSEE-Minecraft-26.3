@@ -22,9 +22,16 @@ public final class ClientHooks {
     private static final long DOUBLE_CLICK_WINDOW_NANOS = 500_000_000L;
     private static long lastShieldUseClick;
     private static boolean jumpKeyWasDown;
+    private static boolean doubleJumpWasOnGround;
     private static final java.util.Map<Integer, Boolean> TRACKING_INDICATORS = new java.util.HashMap<>();
+    private static final cn.wusheng.oatz.movement.MovementImpulseState MOVEMENT_IMPULSES =
+            new cn.wusheng.oatz.movement.MovementImpulseState();
 
     private ClientHooks() {
+    }
+
+    public static void handleMovementImpulse(MovementImpulsePayload payload) {
+        MOVEMENT_IMPULSES.apply(Minecraft.getInstance().player, payload);
     }
 
     public static void handleTrackingTarget(TrackingTargetPayload payload) {
@@ -67,16 +74,28 @@ public final class ClientHooks {
     @SubscribeEvent
     public static void pollDoubleJump(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null || minecraft.player == null || minecraft.gui.screen() != null
-                || minecraft.gui.overlay() != null) {
+        if (minecraft.level == null || minecraft.player == null) {
+            WseeMod.clearFlyingHookClientState();
+            MOVEMENT_IMPULSES.clear();
             jumpKeyWasDown = false;
+            doubleJumpWasOnGround = false;
+            return;
+        }
+        boolean onGround = minecraft.player.onGround();
+        if (minecraft.gui.screen() != null || minecraft.gui.overlay() != null) {
+            // Keep the edge detector aligned while a screen is open. Otherwise
+            // holding jump through a menu can create a fake second-press edge.
+            jumpKeyWasDown = minecraft.options.keyJump.isDown();
+            doubleJumpWasOnGround = onGround;
             return;
         }
         boolean down = minecraft.options.keyJump.isDown();
-        if (down && !jumpKeyWasDown && WseeMod.hasDoubleJump(minecraft.player)) {
-            ClientPacketDistributor.sendToServer(new DoubleJumpPayload());
+        if (down && !jumpKeyWasDown && !onGround && !doubleJumpWasOnGround
+                && WseeMod.hasDoubleJump(minecraft.player)) {
+            sendDoubleJumpPayload(minecraft.player);
         }
         jumpKeyWasDown = down;
+        doubleJumpWasOnGround = onGround;
     }
 
     @SubscribeEvent
@@ -111,9 +130,10 @@ public final class ClientHooks {
         }
         LocalPlayer player = minecraft.player;
 
-        // GLFW button 1 is the physical right mouse button. Handle the raw click so this
-        // still works when the use-item key mapping is changed or while the shield is raised.
-        if (event.getButton() != 1) {
+        // Use the platform constants: Minecraft 26.3's SDL input uses a different
+        // numbering from the legacy GLFW assumptions (left is 1, right is 3).
+        if (event.getButton() != InputConstants.MOUSE_BUTTON_RIGHT) {
+            lastShieldUseClick = 0L;
             return;
         }
         if (player == null || !WseeMod.hasShieldBash(player)) {
@@ -135,8 +155,8 @@ public final class ClientHooks {
     @SubscribeEvent
     public static void onAttackClick(InputEvent.MouseButton.Pre event) {
         Minecraft minecraft = Minecraft.getInstance();
-        // GLFW button 0 is the physical left mouse button used for attacking.
-        if (event.getButton() != 0
+        // Use the platform constant rather than a legacy raw button number.
+        if (event.getButton() != InputConstants.MOUSE_BUTTON_LEFT
                 || event.getAction() != InputConstants.PRESS
                 || minecraft.gui.screen() != null
                 || minecraft.gui.overlay() != null) {
@@ -174,15 +194,27 @@ public final class ClientHooks {
     @SubscribeEvent
     public static void onJumpKey(InputEvent.Key event) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (event.getAction() != InputConstants.PRESS
-                || event.getKey() != minecraft.options.keyJump.getKey().getValue()) {
+        if (event.getKey() != minecraft.options.keyJump.getKey().getValue()) {
             return;
         }
+        if (event.getAction() == InputConstants.RELEASE) {
+            jumpKeyWasDown = false;
+            return;
+        }
+        if (event.getAction() != InputConstants.PRESS || jumpKeyWasDown) {
+            return;
+        }
+        jumpKeyWasDown = true;
         if (minecraft.gui.screen() != null || minecraft.gui.overlay() != null || minecraft.player == null
                 || !WseeMod.hasDoubleJump(minecraft.player)) {
             return;
         }
-        jumpKeyWasDown = true;
+        if (!minecraft.player.onGround()) {
+            sendDoubleJumpPayload(minecraft.player);
+        }
+    }
+
+    private static void sendDoubleJumpPayload(LocalPlayer player) {
         ClientPacketDistributor.sendToServer(new DoubleJumpPayload());
     }
 }

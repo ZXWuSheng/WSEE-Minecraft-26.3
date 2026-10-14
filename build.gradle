@@ -3,7 +3,7 @@ plugins {
     id 'net.neoforged.moddev' version '2.0.147'
 }
 
-version = '0.1.0'
+version = '0.1.1'
 group = 'cn.wusheng'
 
 repositories {
@@ -34,6 +34,9 @@ neoForge {
     }
 }
 
+sourceSets.test.compileClasspath += sourceSets.main.compileClasspath
+sourceSets.test.runtimeClasspath += sourceSets.main.runtimeClasspath
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
@@ -42,26 +45,21 @@ tasks.withType(Jar).configureEach {
     archiveFileName = "WSEE-${project.version}-NeoForge.jar"
 }
 
-sourceSets.test {
-    // The collision fixtures use Minecraft's math types without launching a game.
-    compileClasspath += sourceSets.main.compileClasspath
-    runtimeClasspath += sourceSets.main.runtimeClasspath
-}
-
-tasks.named('test') {
-    // The collision fixtures run through their JavaExec task, not a JUnit runner.
-    exclude '**/FlyingHookCollisionTest.class'
-}
-
-tasks.register('testFlyingHookCollision', JavaExec) {
-    dependsOn testClasses
+tasks.register('regressionTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks loader-independent enchantment values without starting Minecraft.'
+    dependsOn tasks.named('testClasses')
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'cn.wusheng.oatz.FlyingHookCollisionTest'
+    mainClass = 'cn.wusheng.oatz.enchantment.RegressionSuite'
     javaLauncher = javaToolchains.launcherFor {
         languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
+tasks.named('test') {
+    exclude '**/*Regression.class', '**/RegressionSuite.class'
+}
+
 tasks.named('check') {
-    dependsOn 'testFlyingHookCollision'
+    dependsOn tasks.named('regressionTest')
 }

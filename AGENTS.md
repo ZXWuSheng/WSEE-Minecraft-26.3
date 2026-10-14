@@ -51,7 +51,7 @@ The document `无声无息-拓展附魔（Without a sound Expanded Enchantments�
 - `等级数值` must use a readable table whenever levels or numeric values exist. Command information must also use a two-column table (`命令` / `作用`).
 - Section titles use the existing Heading 1 style. Subsection titles use the existing blue Heading 2 style. Rule details use the existing `List Bullet` style.
 - Table headers use a dark blue fill with bold white text. Body text and table text use the same document font, `微软雅黑`.
-- Keep all entries under the correct version section. The current release is `WSEE 0.1.0`; all current enchantment entries belong to its `WSEE 0.1.0` section unless a later version is explicitly created.
+- Keep all entries under the correct version section. The current release is `WSEE 0.1.1`; all current enchantment entries belong to its `WSEE 0.1.1` section unless a later version is explicitly created.
 - The Chinese name of the shield enchantment must be written as `“闪”`; its English name is `Deflect`. There is no custom mace enchantment.
 - After editing, validate that the DOCX opens successfully and that its internal XML is well-formed before handing it off.
 
@@ -64,10 +64,10 @@ All WSEE enchantments are custom, equipment-specific enchantments. Their data de
 - 剑气 (`sword_aura`): swords only; conflicts with vanilla Sweeping Edge. Its range by level I-V is 6/7/8/9/10 blocks and its wave width is 2.5 blocks. It fires toward the player's horizontal facing direction, works on both a hit and an air swing, is disabled while blocking or while an inventory/chat screen is open, and uses one sweeping-edge particle per forward row rather than a thin line or a stack of three waves.
 - 盾击 (`shield_bash`): shields only; it has a 50-tick cooldown and an air swing also starts the cooldown. It must not trigger while an inventory/chat screen is open.
 - “闪” (`deflect`): shields only; English name `Deflect`. It reflects only normal arrows, tipped arrows, and spectral arrows. Reflection uses the blocking player's look direction, speed ×0.90, damage ×0.80, transfers attack ownership, and marks each projectile so it can be reflected at most once. Do not reflect explosive arrows or unrelated projectiles.
-- 扩容 (`expansion`), 聚束 (`cluster`), 穿甲 (`armor_piercing`): crossbows only. Expansion and Cluster conflict with each other and with vanilla Multishot. Cluster must allow every generated arrow to resolve its damage rather than only the first arrow.
+- 扩容 (`expansion`) supports bows and crossbows; 聚束 (`cluster`) and 穿甲 (`armor_piercing`) remain crossbow-only. Expansion and Cluster conflict with each other and with vanilla Multishot; Expansion may coexist with Explosive Arrow and Tracking. Cluster must allow every generated arrow to resolve its damage rather than only the first arrow.
 - 流血 (`bleeding`), 长锋 (`long_edge`): spear tag only. Bleeding conflicts with Lunge and is a physical damage-over-time effect that respects armor, toughness, Protection, and does not recursively trigger hit enchantments. Long Edge changes spear entity attack range only.
 - 涌流 (`surge`), 牵引 (`tether`), 回旋 (`rebound`), 震水 (`hydroshock`): thrown-trident mechanics only; never apply them to melee trident attacks. Surge conflicts with Riptide. Tether conflicts with Riptide, Surge, and Rebound. Rebound requires Loyalty and conflicts with Riptide and Tether. Hydroshock conflicts with Riptide and may coexist with Surge, Tether, and Rebound.
-- 蓄势 (`overcharge`), 爆矢 (`explosive_arrow`): bows only. These have different equipment ownership from Combo Strike and add no cross-enchantment conflict. Overcharge's bonus starts only after the vanilla full-draw threshold; I/II/III add up to +15%/+25%/+35% damage and +5%/+8%/+12% velocity after 10/15/20 extra ticks, with linear progress and visible but restrained feedback. Explosive Arrow's delayed explosion is based on the shooter's attack power and must trigger on both entity and block impacts.
+- 蓄势 (`overcharge`) remains bow-only; 爆矢 (`explosive_arrow`) supports bows and crossbows. These have different equipment ownership from Combo Strike. Overcharge's bonus starts only after the vanilla full-draw threshold; I/II/III add up to +15%/+25%/+35% damage and +5%/+8%/+12% velocity after 10/15/20 extra ticks, with linear progress and visible but restrained feedback. Explosive Arrow conflicts with Arrow Rain, may coexist with Expansion and Tracking, and its delayed explosion is based on the shooter's attack power and must trigger on both entity and block impacts.
 - 连斩 (`combo_strike`), 剑气 (`sword_aura`): swords only. Combo Strike conflicts with Sword Aura, uses a two-cell charge display (empty, then yellow, then red for the final-hit-ready state), and must not conflict with Battle Momentum.
 - 越战越勇 (`battle_momentum`): melee weapons only (swords, axes, spears, tridents, and maces). It counts only successful direct melee damage by the player using the current main-hand weapon; projectile, bleed, fire, thorns, explosion, potion, and other independent damage must not add stacks.
 - 处决 (`execution`): axes only. It modifies the current attack before defense calculation, uses current health plus absorption for the 30% threshold, and never creates a second damage event.
@@ -82,7 +82,7 @@ All WSEE enchantments are custom, equipment-specific enchantments. Their data de
 ### Arrow Rain implementation note
 
 - Arrow Rain (`arrow_rain`) is restricted to bows and conflicts with Explosive Arrow. A shot drawn to at least 90% that first hits an entity or block creates a 10-tick warning, then spawns real non-pickup arrows over the impact area for 30/36/40 ticks (I/II/III: 6/9/12 arrows, radius 2.25/2.75/3.25 blocks, base damage multipliers 0.18/0.20/0.22). Rain arrows use normal collision, armor, protection, shields, and hurt immunity; they are marked to prevent Arrow Rain, Explosive Arrow, and Overcharge recursion. Entity centers may be followed during the warning only; the rain area is fixed afterward, and indoor ceiling clearance must be respected.
-- Tracking (`tracking`) is restricted to bows. For bow shots drawn to at least 80%, select one valid LivingEntity target once at spawn within 24/48/72 blocks for levels I/II/III and ±25°/±35°/±50° of the initial direction. During up to 40 ticks, gently turn toward the locked target by at most 3.0°/5.0°/7.0° per tick while preserving speed, gravity, air drag, collision, armor, shields, and damage. Stop permanently on obstruction, invalid/dead target, >70° initial-direction deviation, or timeout; never switch targets, pierce blocks, increase damage/speed, or alter Owner.
+- Tracking (`tracking`) supports bows and crossbows. For bow or crossbow shots reaching at least 80% firing strength, select one valid LivingEntity target once at spawn within 24/48/72 blocks for levels I/II/III and ±25°/±35°/±50° of the initial direction. During up to 40 ticks, gently turn toward the locked target by at most 3.0°/5.0°/7.0° per tick while preserving speed, gravity, air drag, collision, armor, shields, and damage. Stop permanently on obstruction, invalid/dead target, >70° initial-direction deviation, or timeout; never switch targets, pierce blocks, increase damage/speed, or alter Owner. Tracking has no additional conflict and may coexist with Expansion, Explosive Arrow, and Arrow Rain.
 - Tracking lock feedback is shooter-local: send only the locked entity ID to that player's client, show a temporary vanilla glowing outline while the arrow remains tracked, and clear it when tracking ends. Never set the server entity's global glowing flag or expose the indicator to other players.
 
 ### Shared behavior safeguards
@@ -98,8 +98,8 @@ All WSEE enchantments are custom, equipment-specific enchantments. Their data de
 
 ### Version, build, and launch safeguards
 
-- The current mod identity is `WSEE 0.1.0`, display name `无声无息：拓展附魔（Without a sound: Expanded Enchantments）`, author `ZX_Wu_Sheng`, and mod id `wsee`. Credits are `KsqsnK，Badnng，Wangmeili，Niorris`. Do not reintroduce OATZ as the public display name.
-- All current enchantment entries are filed under the WSEE 0.1.0 section. Keep the document's version sections and the README enchantment count synchronized.
+- The current mod identity is `WSEE 0.1.1`, display name `无声无息：拓展附魔（Without a sound: Expanded Enchantments）`, author `ZX_Wu_Sheng`, and mod id `wsee`. Credits are `KsqsnK，Badnng，Wangmeili，Niorris`. Do not reintroduce OATZ as the public display name.
+- All current enchantment entries are filed under the WSEE 0.1.1 section. Keep the document's version sections and the README enchantment count synchronized.
 - After source or resource changes, run a clean build with Java 25, validate every JSON resource, inspect the JAR entries, calculate its SHA-256, and copy the resulting JAR to the test instance mods directory.
 - Do not start the Minecraft client automatically. The user launches the client manually; report build and validation results without opening PCL or a test world.
 
@@ -114,17 +114,24 @@ All WSEE enchantments are custom, equipment-specific enchantments. Their data de
 - Candidates must exclude `#wsee:air_force_fish`, `#wsee:air_force_unobtainable`, `#wsee:air_force_admin_blacklist`, and `#wsee:air_force_blacklist`, plus the built-in technical-item safety list. Fish probability is always 0%; Luck of the Sea only selects Common/Uncommon/Rare/Epic pools using the documented weights.
 - Preserve vanilla fishing experience, rod durability, entity-hook behavior, armor/item state, and projectile/drop presentation. Keep fishing-rod runtime validation, anvil/enchanting restrictions, creative book entry, language keys, tags, README count, and the DOCX entry synchronized.
 
-### Flying Hook enchantment
+### 飞钩附魔
 
-- Flying Hook (`flying_hook`) is fishing-rod-only, maximum level V. It accelerates the real FishingHook by x1.15/x1.30/x1.45/x1.60/x1.75 while retaining vanilla gravity and a downward arc, anchors using collision-shape center rays and swept-hook-hitbox contacts at the exact contact point of entities or physical block faces (excluding grass plants, flowers, and vines without collision shapes), and automatically pulls the player at 0.55/0.65/0.75/0.85/0.95 speed, with 24/30/36/42/48 block range.
-- It conflicts with vanilla Lure, Luck of the Sea, and Air Force. If forced into an illegal combination, Flying Hook mode takes priority and suppresses normal fishing loot. Unbreaking, Mending, and Curse of Vanishing remain vanilla-compatible.
-- Pulling uses DeltaMovement, never teleportation. Allow the first movement attempt and vanilla stepping; supporting ground must not cancel horizontal pulling after a downward cast. Stop when a contacted block face actually prevents movement in the pull direction, or at <=1.5 blocks, 60 ticks, missing anchors, no progress for 10 ticks, dimension change, death, riding, gliding, or creative flight. Preserve vanilla durability, fall-damage reset/restore, hook collision, and entity behavior.
+- 飞钩（`flying_hook`）仅适用于钓鱼竿，最高等级为 I。保留鱼钩发射速度 ×1.15，并使用原版重力形成抛物线；最大距离沿用原版鱼竿的 32 格，不增加等级对应的距离奖励。
+- 方块锚点必须使用真实碰撞形状的中心射线和鱼钩碰撞箱扫掠，接受有效边缘接触，排除无碰撞形状的草、花和藤蔓，保存精确命中坐标、维度、方块位置及命中面；`LivingEntity` 锚点保存相对命中偏移并跟随实体。命中后进入固定等待阶段，不自动牵引玩家。
+- 沿用钓鱼竿使用键：首次使用发射，锚定后再次使用开始收绳，收绳期间再次使用取消并回收，未命中时再次使用回收，到达锚点附近自动回收。服务端校验原始持竿手、当前钩头、玩家、锚点及操作阶段。
+- 收绳每 tick 将目标绳长缩短 0.35 格。只有绳索绷紧时才向当前 `DeltaMovement` 叠加朝锚点的加速度，最大为 0.24 格/tick²；飞钩提供的径向速度上限为 0.55 格/tick，保留切向运动和独立冲量。在 1.5 格到达边界之外的 3 格范围内逐步减力，系数由 1 降至最低 0.5（`MIN_TENSION_FACTOR`），保留有限张力；锚点至玩家碰撞箱 `AABB` 的最近距离不超过 1.5 格时判定到达。
+- 允许首次移动和原版上台阶；向下抛竿时地面支撑不阻止水平牵引。已接触方块面实际阻止拉力方向移动时停止；收绳持续 120 tick、受阻且连续 10 tick 无进展、锚点无效或缺失、区块不可用、超出距离、钩头移除、失去装备资格、切换维度、死亡、退出、骑乘、滑翔或创造飞行时结束。清理可重复调用，并保留自然速度；不得强制加载远处区块或刷新二段跳次数。
+- 与原版饵钓、海之眷顾和空军冲突。强制加入非法组合时，飞钩模式优先并抑制普通钓鱼战利品；不带飞钩的鱼竿继续普通钓鱼和空军流程。耐久、经验修补及消失诅咒保持原版兼容。
+- 保留既有耐久和摔落距离规则：保存收绳前的摔落距离，收绳期间清零，结束时恢复 `max(saved, current)`。服务端使用已验证的 `getKnownMovement()` 估算径向速度，只授权本次牵引增量并切换阶段。通过 `MovementImpulsePayload` 同步增量，客户端校验当前自身、维度、会话 UUID 和递增序号后，只向接收时的自身实际速度叠加一次；不得用全量速度包覆盖玩家惯性，也不得清除原版或其他模组的运动同步标志。服务端同时给正向牵引增量附带径向速度上限；客户端只按接收时的实际速度缩小这一次授权增量，已有速度超过上限时保留原速度、不再追加，切向速度不变。接近锚点时只减少新增拉力，完整保留已有速度；由原版重力、阻力、碰撞和到达回收自然结束运动。二段跳不使用该正向限速，这只是执行服务端授权的保守幅度，不是客户端自行判定资格或持续预测牵引。客户端同时显示同步后的钩头和绳索。
 
-### Double Jump enchantment
+### 二段跳附魔
 
-- Double Jump (`double_jump`) is boots-only, maximum level I. After leaving the ground, one server-validated second jump is available; preserve X/Z velocity and set Y velocity directly to 0.65 without adding to current Y speed. Detect a fresh press through the server's `isJumping()` rising edge as well as the client key event and tick poll, then send `ClientboundSetEntityMotionPacket` so the air jump is visible and authoritative on both sides.
-- Reset availability only on genuine `onGround` contact. Do not refresh from block sides, entities, cobwebs, ladders, swimming, riding, elytra, spectator, or creative flight. Use the player's bound jump key to send a client payload with server-side revalidation, and prevent key-repeat from consuming multiple jumps.
-- On the second jump set fall distance to zero, then use vanilla falling afterward. Add two blocks to the fall-distance threshold before vanilla fall damage; do not multiply or cancel damage and remain compatible with Feather Falling.
+- 二段跳（`double_jump`）仅适用于靴子，最高等级为 I。离地后，一次经过服务端验证的第二跳读取当前完整速度，并且只叠加一次独立的向上冲量 `(0, 0.65, 0)`。X/Z 不变，Y 在原值上增加，保留原有上升、下落及外部推力。不得调用原版地面跳跃加速、改变疾跑状态、设置隐藏的最低 Y 速度或在客户端预测叠加。
+- 通过绑定跳跃键的客户端按键事件、tick 上升沿以及服务端 `isJumping()` 上升沿识别一次新按键；同一空中机会的重复请求必须拒绝，成功后由服务端通过 `MovementImpulsePayload` 授权一次向上增量。客户端收到授权后向自身实际当前速度叠加，通过会话和序号去重；不得在输入时预测施加冲量，也不得自行决定资格。激活反馈只由服务端产生一次。
+- 只有真实的 `onGround` 接触可以刷新次数。墙面或实体接触、蜘蛛网、梯子、游泳、骑乘、鞘翅、旁观模式、创造飞行、物品切换及飞钩清理都不能刷新。失去靴子资格时禁止触发，但不得授予新的空中机会。
+- 第二跳保留既有摔落距离重置规则，之后按原版继续下落。原版摔落伤害起算阈值额外增加 2 格，不乘算或取消最终伤害，并保持与摔落保护兼容。
+- 藤蔓、梯子等可攀爬方块允许消耗已有的空中跳跃机会，但接触本身不刷新次数；保留二段跳上升和收绳动量，仍遵守实际方块碰撞。二段跳不显示 HUD 指示器。
+- 飞钩收绳期间可以叠加二段跳的一次向上冲量；两个系统不得清除或重置对方的状态，飞钩后续更新必须保留切向速度及独立运动。
 
 ### Current synchronization requirements
 
@@ -140,12 +147,12 @@ All WSEE enchantments are custom, equipment-specific enchantments. Their data de
 
 ### Platform-specific artifact names
 
-- NeoForge builds must produce `build/libs/WSEE-0.1.0-NeoForge.jar`.
-- Fabric builds must produce `build/libs/WSEE-0.1.0-Fabric.jar`.
-- Keep the platform suffix when copying, uploading, or documenting artifacts; never describe either platform's current output as the unsuffixed `WSEE-0.1.0.jar`.
+- NeoForge builds must produce `build/libs/WSEE-0.1.1-NeoForge.jar`.
+- Fabric builds must produce `build/libs/WSEE-0.1.1-Fabric.jar`.
+- Keep the platform suffix when copying, uploading, or documenting artifacts; never describe either platform's current output as the unsuffixed `WSEE-0.1.1.jar`.
 
 ### Dual-loader specification document
 
-- The formal current specification is `WSEE-0.1.0-Minecraft-26.3-Fabric-NeoForge-详细规格.docx` at the repository root.
+- The formal current specification is `WSEE-0.1.1-Minecraft-26.3-Fabric-NeoForge-详细规格.docx` at the repository root.
 - The document must cover both NeoForge `26.3.0.6-beta` and Fabric Loader `0.19.5` with Fabric API `0.158.0+26.3`. Both loaders share the `wsee` IDs, language keys, data tags, equipment restrictions, conflicts, numeric values, and behavior contract; only loader integration details may differ.
 - Keep the document's 31-enchantment inventory synchronized with source, resources, README, and both loader metadata files. Do not present the old single-loader document as the current specification.
