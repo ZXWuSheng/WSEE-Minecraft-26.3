@@ -7,7 +7,7 @@ config = "wsee.mixins.json"
 
 [[mods]]
 modId = "wsee"
-version = "0.1.1"
+version = "0.1.2"
 displayName = "无声无息：拓展附魔（Without a sound: Expanded Enchantments）"
 authors = "ZX_Wu_Sheng"
 credits = "KsqsnK，Badnng，Wangmeili，Niorris"
