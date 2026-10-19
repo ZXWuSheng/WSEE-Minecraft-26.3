@@ -2,6 +2,23 @@ modLoader = "javafml"
 loaderVersion = "[3,)"
 license = "MIT"
 
+[features.wsee]
+javaVersion = "[25,)"
+
+[[dependencies.wsee]]
+modId = "neoforge"
+type = "required"
+versionRange = "[26.3.0.83,26.4)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.wsee]]
+modId = "minecraft"
+type = "required"
+versionRange = "[26.3]"
+ordering = "NONE"
+side = "BOTH"
+
 [[mixins]]
 config = "wsee.mixins.json"
 

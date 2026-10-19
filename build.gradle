@@ -18,7 +18,8 @@ base {
 java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
 neoForge {
-    version = '26.3.0.6-beta'
+    // Override only for compatibility checks; release builds use the default.
+    version = providers.gradleProperty('neoForgeVersion').getOrElse('26.3.0.92')
     validateAccessTransformers = false
 
     runs {

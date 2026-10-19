@@ -36,7 +36,8 @@ WSEE 为 Minecraft 添加 **31 项自定义附魔**，覆盖剑、斧、矛、�
 | 当前构建版本 | **0.1.2** |
 | Minecraft | **26.3** |
 | 当前维护平台 | **NeoForge** |
-| 编译使用的 NeoForge | **26.3.0.6-beta** |
+| 编译使用的 NeoForge | **26.3.0.92** |
+| NeoForge 加载范围 | **26.3.0.83 ≤ 版本 < 26.4**；已对 83 和 92 进行构建及注入点检查 |
 | 游戏运行与 Java 编译工具链 | **Java 25** |
 | Gradle Wrapper | 8.14.3 |
 | NeoForge 构建插件 | `net.neoforged.moddev` 2.0.147 |
@@ -44,7 +45,9 @@ WSEE 为 Minecraft 添加 **31 项自定义附魔**，覆盖剑、斧、矛、�
 | 附魔数量 | **31 项**；不同等级的附魔书不重复计数 |
 | Fabric | **暂时停止更新**，不提供与本轮修复同步的构建说明或行为保证 |
 
-版本号以 [build.gradle](build.gradle) 和 [neoforge.mods.toml](src/main/resources/META-INF/neoforge.mods.toml) 为准。NeoForge 版本号是本项目的实际编译目标；其他 NeoForge 构建的兼容性需要单独验证。
+版本号以 [build.gradle](build.gradle) 和 [neoforge.mods.toml](src/main/resources/META-INF/neoforge.mods.toml) 为准。默认使用 NeoForge **26.3.0.92** 构建，运行依赖明确要求 Minecraft **26.3**、Java **25 或以上**及上述 NeoForge 范围。低于 83 的旧加载器会在依赖检查阶段被拒绝。83 和 92 均通过了本地构建、逻辑回归和 Mixin 目标检查，二者生成的 78 个模组类文件逐一 SHA-256 相同；这不等于已经通过真实客户端、服务器联机或任意整合包的运行验收。范围内其他构建未逐个验证，建议客户端与服务器统一使用 92 和相同 WSEE 版本。
+
+本次升级核对日期为 **2026-10-19**；官方仓库中 83 的更新记录文件时间为 10 月 15 日，92 为 10 月 18 日。92 相比 83 包含按键修饰符、附件初始同步和未命名战利品表等修复，详见 [NeoForge 26.3.0.92 官方更新记录](https://maven.neoforged.net/releases/net/neoforged/neoforge/26.3.0.92/neoforge-26.3.0.92-changelog.txt)。在 83 上运行 WSEE 不会获得加载器后续版本自身的修复。
 
 本仓库仍保留 [0.1.1 双加载器详细规格](WSEE-0.1.1-Minecraft-26.3-Fabric-NeoForge-详细规格.docx)。该文件可作为既有规格参考，但其文件名、版本说明及部分内容尚未完整同步到 0.1.2；不能用它推定 Fabric 已恢复更新。当前行为请结合本文和对应源码核对。
 
@@ -52,7 +55,7 @@ WSEE 为 Minecraft 添加 **31 项自定义附魔**，覆盖剑、斧、矛、�
 
 ### 首次安装
 
-1. 在启动器中准备 Minecraft **26.3** 的 NeoForge 实例，优先使用本项目编译目标 **26.3.0.6-beta**。
+1. 在启动器中准备 Minecraft **26.3** 的 NeoForge 实例，推荐 **26.3.0.92**。已有 **26.3.0.83** 实例满足最低加载要求；早期的 6-beta、16-beta 等实例需要先通过启动器更新 NeoForge，仅替换 WSEE JAR 不会更新加载器。
 2. 将该实例的游戏 Java 设置为 **Java 25**。
 3. 将 `WSEE-0.1.2-NeoForge.jar` 放入这个实例实际使用的 `mods/` 目录。开启版本隔离时，应使用隔离后的版本目录。
 4. 多人游戏中，客户端和服务端使用相同的 WSEE 版本。剑气、盾击、追踪提示、飞钩和二段跳涉及客户端输入或自定义网络消息，不能按纯服务端模组安装。
@@ -848,6 +851,7 @@ build/libs/WSEE-0.1.2-NeoForge.jar
 | --- | --- |
 | `.\gradlew.bat clean build` | 清理旧产物、重新编译、打包，并执行 `check` 依赖的 Java 回归检查 |
 | `.\gradlew.bat regressionTest` | 单独运行附魔数值、装备规则和运动逻辑 Java 回归入口 |
+| `.\gradlew.bat clean build '-PneoForgeVersion=26.3.0.83'` | 临时用最低支持版本 83 编译，并执行同一组逻辑和 Mixin 检查；PowerShell 中保留参数引号 |
 | `python scripts/check_regression_baseline.py` | 检查资源、登记、装备、语言和文档等静态约定 |
 | `python scripts/check_movement_contract.py --neoforge-only` | 检查当前 NeoForge 运动接线与文档约定 |
 | `Get-FileHash .\build\libs\WSEE-0.1.2-NeoForge.jar -Algorithm SHA256` | 记录构建产物 SHA-256 |
@@ -855,6 +859,10 @@ build/libs/WSEE-0.1.2-NeoForge.jar
 | `git diff --check` | 检查文档或源码差异中的空白问题 |
 
 Python 命令需要实际可用的 Python 3；仅有 Windows 应用商店占位程序不代表已安装解释器。
+
+`neoForgeVersion` 参数仅用于兼容性验证，不修改默认发布目标。完成 83 检查后，再执行一次不带该参数的 `.\gradlew.bat clean build`，以生成最终的 **92 编译产物**。
+
+`regressionTest` 还会从当前 Gradle 依赖读取 NeoForge 补丁后的 Minecraft 类文件，逐项检查 `wsee.mixins.json` 中全部 7 个 Mixin：目标方法及描述符、静态／实例属性、回调和重定向参数、Shadow 方法、指定调用及 ordinal、攀爬速度常量和注入点数量。检查不初始化 Minecraft 类、不启动游戏。它能发现这类目标变更，但不能代替 Mixin 实际转换、其他模组混入冲突或游戏内行为验收。
 
 PowerShell 批量检查源资源 JSON：
 
@@ -868,12 +876,14 @@ Get-ChildItem .\src\main\resources -Recurse -Filter *.json -File |
 
 ### 当前验证状态与限制
 
-对上游源码提交 **`8ca550b`** 的本地验证结果如下。该状态用于说明本版现状，不代表今后每次修改都自动通过。
+以下为 **2026-10-19 NeoForge 升级后的本地验证**，玩法源码基于上游 **`8ca550b`**。该状态用于说明本版现状，不代表今后每次修改都自动通过。
 
 | 检查项 | 结果 |
 | --- | --- |
-| Java 21 启动 Gradle，Java 25 工具链干净构建 | 通过 |
-| Java 回归检查 | 通过，覆盖登记、装备、数值、二段跳、飞钩运动、碰撞、流程及运动消息 |
+| Java 21 启动 Gradle，Java 25 工具链干净构建 | NeoForge 83、92 均通过，最终产物使用 92 |
+| Java 回归检查 | 两个版本各通过 1188 条逻辑断言，覆盖登记、装备、数值、二段跳、飞钩运动、碰撞、流程及运动消息 |
+| Mixin 字节码兼容检查 | 两个版本各通过 135 条断言，覆盖全部 7 个 Mixin |
+| 83／92 模组类文件比较 | 78 个类文件逐一 SHA-256 一致 |
 | 源资源 JSON 解析 | 通过，79 个 JSON |
 | JAR 结构检查 | 通过，包含 31 项附魔定义，类文件版本为 Java 25 对应的 69 |
 | `check_regression_baseline.py` | 15 项中 13 项通过、2 项失败 |

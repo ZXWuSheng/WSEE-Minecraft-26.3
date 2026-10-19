@@ -14,5 +14,6 @@ public final class RegressionSuite {
         cn.wusheng.oatz.movement.FlyingHookCollisionRegression.main(args);
         cn.wusheng.oatz.movement.FlyingHookCycleRegression.main(args);
         cn.wusheng.oatz.movement.MovementImpulseRegression.main(args);
+        cn.wusheng.oatz.compat.MixinCompatibilityRegression.main(args);
     }
 }
