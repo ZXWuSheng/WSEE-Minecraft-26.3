@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    # Dependabot 的更新由 PR 检查，避免同一提交再构建一次。
+    branches: ['**', '!dependabot/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 每次 push 都保留构建；只取消同一 PR 的旧构建。
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact_name: ${{ steps.package.outputs.artifact_name }}
+      artifact_url: ${{ steps.upload.outputs.artifact-url }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Build and test mod
+        run: bash ./gradlew --no-daemon build
+      - name: Package mod artifacts
+        id: package
+        env:
+          MOD_NAME: WSEE
+          JAR_PATTERN: WSEE-*-NeoForge.jar
+        run: python3 -B .github/scripts/package_mod.py
+      - name: Upload mod artifacts
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: ${{ runner.temp }}/ci-dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  telegram:
+    name: Send CI JAR to Telegram
+    needs: build
+    # 在仓库 Variables 中显式启用；PR、fork 和其它分支不会向频道发消息。
+    if: >-
+      vars.TELEGRAM_ENABLED == 'true' &&
+      github.repository == 'ZXWuSheng/WSEE-Minecraft-26.3' &&
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    # 同一机器人在多个临时服务器之间切换前必须结束上一次发送。
+    concurrency:
+      group: telegram-ci-channel
+      cancel-in-progress: false
+      queue: max
+    env:
+      # 官方 Bot API 10.3 源码；仅缓存编译后的程序，不缓存机器人会话。
+      TELEGRAM_BOT_API_COMMIT: e3e9dd8e5b3d7ab8537cd5a10dc31d5ffa8f82d1
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Check Telegram configuration
+        id: telegram-config
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: python3 -B .github/scripts/telegram_ci.py --check-config
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: ${{ runner.temp }}/ci-dist
+
+      - name: Restore official Bot API binary
+        id: bot-api-cache
+        if: steps.telegram-config.outputs.api_mode == 'local'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/telegram-bot-api-bin
+          key: telegram-bot-api-ubuntu24.04-${{ runner.arch }}-${{ env.TELEGRAM_BOT_API_COMMIT }}-v1
+
+      - name: Build official Bot API server
+        if: steps.telegram-config.outputs.api_mode == 'local' && steps.bot-api-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 40
+        run: bash .github/scripts/build_telegram_bot_api.sh
+
+      - name: Cache official Bot API binary
+        if: steps.telegram-config.outputs.api_mode == 'local' && steps.bot-api-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/telegram-bot-api-bin
+          key: ${{ steps.bot-api-cache.outputs.cache-primary-key }}
+
+      - name: Send JAR or download link through selected Bot API
+        timeout-minutes: 25
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_BOT_API_BINARY: ${{ runner.temp }}/telegram-bot-api-bin/telegram-bot-api
+          ARTIFACT_URL: ${{ needs.build.outputs.artifact_url }}
+        run: python3 -B .github/scripts/telegram_ci.py "$RUNNER_TEMP/ci-dist"
