@@ -1,6 +1,0 @@
-{
-  "parent": "minecraft:item/generated",
-  "textures": {
-    "layer0": "wsee:item/shield_bash_enchanted_book"
-  }
-}
