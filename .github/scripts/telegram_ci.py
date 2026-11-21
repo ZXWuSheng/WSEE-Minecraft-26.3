@@ -90,26 +90,36 @@ def check_config():
     return mode
 
 
-def caption(info):
+def caption(info, *, notice=""):
     def escape(value, limit):
         # Telegram 按 UTF-16 计数；先截断再 HTML 转义，避免截断实体/标签。
         text = str(value).encode("utf-16-le")[:limit * 2].decode("utf-16-le", errors="ignore")
         return html.escape(text)
 
-    return (
-        f"<b>{escape(info['projectName'], 80)} | CI Build #{escape(info['runNumber'], 20)}</b>\n"
+    project_name = str(info["projectName"])
+    body = (
+        f"<b>{escape(project_name, 80)} | CI Build #{escape(info['runNumber'], 20)}</b>\n"
         f"Version: {escape(info['versionName'], 80)}\n"
         f"Branch: {escape(info['branch'], 80)}\n"
         f"Commit: <code>{escape(info['commit'][:7], 7)}</code>\n\n"
         f"Commit message:\n<pre>{escape(info['commitMessage'], 500)}</pre>"
     )
+    if notice:
+        body += "\n\n" + html.escape(notice)
+
+    # Limit the ASCII slug to the same budget as the display name.
+    project_tag = re.sub(r"[^A-Za-z0-9_]+", "_", project_name).strip("_")[:80].rstrip("_")
+    footer = "#OA"
+    if re.search(r"[A-Za-z]", project_tag) and project_tag.upper() != "OA":
+        footer = f"#{project_tag} {footer}"
+    return f"{body}\n\n{footer}"
 
 
-def notification_fields(info, artifact_url):
+def notification_fields(info, artifact_url, *, notice=""):
     return {
         "chat_id": normalize_chat_id(os.environ["TELEGRAM_CHAT_ID"]),
         "parse_mode": "HTML",
-        "caption": caption(info),
+        "caption": caption(info, notice=notice),
         "reply_markup": json.dumps({"inline_keyboard": [[
             {"text": "下载 Actions 产物", "url": artifact_url},
             {"text": "构建详情", "url": info["runUrl"]},
@@ -257,16 +267,17 @@ def publish_cloud(token, info, jar, artifact_url):
     size = jar.stat().st_size
     if size <= 0:
         raise ValueError("JAR must be nonempty")
-    fields = notification_fields(info, artifact_url)
     # 云端模式不启动本地服务，也不调用 logOut；只发送一次，避免超时后重复通知。
     if size > CLOUD_MAX_DOCUMENT_BYTES:
-        fields["text"] = fields.pop("caption") + (
-            "\n\n未配置完整的 Telegram App API，已回退到普通 Bot API。"
+        fields = notification_fields(info, artifact_url, notice=(
+            "未配置完整的 Telegram App API，已回退到普通 Bot API。"
             "JAR 超过 50 MB 上传限制，请从 Actions 下载（需登录 GitHub）。"
-        )
+        ))
+        fields["text"] = fields.pop("caption")
         api_call(token, "sendMessage", fields, endpoint=CLOUD_API)
         print("Telegram CI download link sent; JAR exceeds the hosted Bot API 50 MB upload limit")
     else:
+        fields = notification_fields(info, artifact_url)
         api_call(token, "sendDocument", fields, endpoint=CLOUD_API, timeout=1200, document=jar)
         print("Telegram CI JAR uploaded through hosted Bot API")
 
